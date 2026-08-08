@@ -322,7 +322,7 @@ export class ATokenService {
       atoken_address: params.atokenAddress,
       address: params.address,
       amount: params.amount,
-    });
+    }, false);
 
     if (this.isSuccess(response)) {
       logger.info({ 
@@ -360,6 +360,40 @@ export class ATokenService {
         txHash: response.data?.tx_hash,
         mintedAmount: response.data?.minted_amount 
       }, 'A-Tokens minted successfully');
+    }
+
+    return response;
+  }
+
+  /**
+   * Transfer A-Tokens to another address
+   * POST /atoken/transfer
+   */
+  async transfer(params: {
+    atokenAddress: string;
+    fromAddress: string;
+    toAddress: string;
+    amount: string;
+  }): Promise<CleanverseResponse<any>> {
+    logger.info({
+      atokenAddress: params.atokenAddress,
+      fromAddress: params.fromAddress,
+      toAddress: params.toAddress,
+      amount: params.amount
+    }, 'Transferring A-Tokens');
+
+    const response = await this.client.post<any>('/atoken/transfer', {
+      atoken_address: params.atokenAddress,
+      from_address: params.fromAddress,
+      to_address: params.toAddress,
+      amount: params.amount,
+    }, false);
+
+    if (this.isSuccess(response)) {
+      logger.info({
+        txHash: response.data?.tx_hash,
+        transferredAmount: response.data?.transferred_amount
+      }, 'A-Tokens transferred successfully');
     }
 
     return response;

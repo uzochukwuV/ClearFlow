@@ -148,17 +148,28 @@ router.post('/:dealId/investor/:address/claim', async (req: Request, res: Respon
     // Fallback: Transfer tokens to deal wallet if burn not available
     if (!tokensRemoved && deal.atokenAddress && deal.circleWalletAddress) {
       try {
-        // In production, this would call a transfer method on the token contract
-        // Investor sends A-tokens to deal wallet (effectively removing them from circulation)
-        logger.info({ 
-          atokenAddress: deal.atokenAddress, 
-          investorAddress: address, 
-          dealWalletAddress: deal.circleWalletAddress,
-          tokenAmount 
-        }, 'Burning via transfer to deal wallet');
-        
-        tokenTxHash = 'TRANSFER-TO-DEAL-'.concat(Date.now().toString());
-        tokensRemoved = true;
+        // Transfer A-tokens from investor to deal wallet
+        // This effectively removes tokens from investor's possession
+        const transferResult = await aTokenService.transfer({
+          atokenAddress: deal.atokenAddress,
+          fromAddress: address,
+          toAddress: deal.circleWalletAddress,
+          amount: tokenAmount.toString(),
+        });
+
+        if (transferResult.code === '0000') {
+          tokenTxHash = transferResult.data?.tx_hash;
+          tokensRemoved = true;
+          logger.info({ 
+            atokenAddress: deal.atokenAddress, 
+            investorAddress: address, 
+            dealWalletAddress: deal.circleWalletAddress,
+            tokenAmount,
+            txHash: tokenTxHash
+          }, 'A-tokens transferred to deal wallet successfully');
+        } else {
+          logger.warn({ error: transferResult.message, dealId, investorAddress: address }, 'Transfer to deal wallet failed');
+        }
       } catch (transferError) {
         logger.error({ error: transferError, dealId, investorAddress: address }, 'Failed to transfer A-tokens');
       }
