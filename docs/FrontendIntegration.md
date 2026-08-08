@@ -544,6 +544,71 @@ The following endpoints are **not yet implemented** and can be added later:
 
 ---
 
+## 14. A-Token & Investor Claim Mechanics
+
+### A-Token Minting (1:1 Ratio)
+When an investor contributes to a deal:
+- Investor contributes **$1,000 USDC**
+- System mints **1,000 A-tokens** to investor's wallet (1:1 ratio)
+- A-tokens represent investor's share of the deal
+- Deal's `totalSupply` increases by 1,000
+
+### Repayment & Yield
+When buyer repays the deal:
+- Buyer repays **$1,100 USDC** (principal + 10% yield)
+- **Admin takes 3%** of yield as platform fee ($3.30)
+- **Remaining 97%** of yield ($106.70) goes to investors
+- Total payout pool = $1,000 (principal) + $106.70 (investor yield) = **$1,106.70**
+
+### Claiming Payouts (BURN to Claim)
+When an investor claims their payout:
+1. **BURN** investor's A-tokens (1,000 tokens)
+2. **TRANSFER** USDC from deal wallet to investor ($1,106.70)
+3. Deal's `totalSupply` decreases by 1,000
+
+### Example Flow
+```
+1. Deal Created: $10,000 target, 10% yield
+2. Investor A contributes $5,000 → receives 5,000 A-tokens
+3. Investor B contributes $5,000 → receives 5,000 A-tokens
+4. Buyer repays $11,000 ($10,000 principal + $1,000 yield)
+5. Admin fee: $1,000 × 3% = $30
+6. Investor pool: $1,000 - $30 = $970
+7. Each investor's share: 50% of $970 = $485 yield
+
+Investor A claims:
+- Burns 5,000 A-tokens
+- Receives $5,000 (principal) + $485 (yield) = $5,485
+
+Investor B claims:
+- Burns 5,000 A-tokens  
+- Receives $5,000 (principal) + $485 (yield) = $5,485
+
+Admin receives: $30
+```
+
+### API Response on Claim
+```json
+{
+  "success": true,
+  "data": {
+    "claimId": "...",
+    "dealId": "...",
+    "investorAddress": "0x...",
+    "principal": 5000.00,
+    "yieldAmount": 485.00,
+    "totalClaimed": 5485.00,
+    "tokenAmount": 5000.00,
+    "tokensBurned": 5000.00,
+    "transferId": "tx_...",
+    "status": "CLAIMED",
+    "message": "Payout claimed successfully. 5000 A-tokens burned. USDC transferred to your wallet."
+  }
+}
+```
+
+---
+
 ## Frontend State Management
 
 ### Recommended State Structure
