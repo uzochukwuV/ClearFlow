@@ -53,6 +53,18 @@ const testWallets = [
       issuingCountry: 'US',
     },
   },
+  {
+    role: 'INVESTOR_2',
+    address: '0xfa43e24f20371974b04f987cbfc84df515a2e015',
+    userType: 'INVESTOR',
+    customerId: 'CLEARFLOW01INVESTOR00002',
+    chain: 'monad',
+    identity: {
+      fullName: 'Alpha Fund LLC',
+      idType: 'ID_CARD',
+      issuingCountry: 'SG',
+    },
+  },
 ];
 
 async function generateAPassForWallet(wallet) {

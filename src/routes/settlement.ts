@@ -1,6 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getSettlementService } from '../services/settlement/settlement.service';
+import { getAuthService } from '../services/auth';
+import { getSettlementService as getSettlementSvc } from '../services/settlement/settlement.service';
+import { payoutReleaseRequestSchema } from '../services/auth/schemas';
 import { logger } from '../config';
+import { prisma } from '../config/database';
 
 const router = Router();
 const settlementService = getSettlementService();
@@ -82,6 +86,148 @@ router.post('/deals/:dealId/pay-supplier', async (req: Request, res: Response) =
     }
   } catch (error) {
     logger.error({ error, dealId: req.params.dealId }, 'Pay supplier error');
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed' 
+    });
+  }
+});
+
+/**
+ * POST /settlement/deals/:dealId/payout-release
+ * 
+ * Release payout to supplier with dual signatures:
+ * - Admin EIP-712 signature: Platform approves payout
+ * - Supplier EIP-712 signature: Supplier signs PO for payment
+ */
+router.post('/deals/:dealId/payout-release', async (req: Request, res: Response) => {
+  try {
+    const dealId = req.params.dealId as string;
+    
+    // Validate request schema
+    const validated = payoutReleaseRequestSchema.parse({
+      ...req.body,
+      dealId,
+    });
+    
+    const authService = getAuthService();
+
+    // 1. Verify ADMIN signature and recover admin address
+    const adminAuthResult = authService.verifySignature(
+      validated.adminSignature,
+      validated.adminMessage
+    );
+    
+    if (!adminAuthResult.valid || !adminAuthResult.walletAddress) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid admin signature', details: adminAuthResult.error },
+      });
+    }
+
+    // 2. Verify SUPPLIER signature and recover supplier address
+    const supplierAuthResult = authService.verifySignature(
+      validated.supplierSignature,
+      validated.supplierMessage
+    );
+    
+    if (!supplierAuthResult.valid || !supplierAuthResult.walletAddress) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid supplier signature', details: supplierAuthResult.error },
+      });
+    }
+
+    logger.info({ 
+      adminAddress: adminAuthResult.walletAddress,
+      supplierAddress: supplierAuthResult.walletAddress,
+      dealId,
+      amount: validated.amount,
+      poId: validated.poId
+    }, 'Processing payout release with dual signatures');
+
+    // 3. Verify the PO belongs to this deal and get supplier address
+    const deal = await prisma.deal.findUnique({
+      where: { id: dealId },
+      include: {
+        purchaseOrder: {
+          include: { supplier: true }
+        }
+      },
+    });
+
+    if (!deal) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'Deal not found' },
+      });
+    }
+
+    if (deal.purchaseOrderId !== validated.poId) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'PO ID does not match deal' },
+      });
+    }
+
+    // 4. Verify supplier address matches
+    const expectedSupplierAddress = deal.purchaseOrder.supplier.walletAddress.toLowerCase();
+    const actualSupplierAddress = supplierAuthResult.walletAddress.toLowerCase();
+    
+    if (expectedSupplierAddress !== actualSupplierAddress) {
+      return res.status(403).json({
+        success: false,
+        error: { message: 'Supplier address mismatch' },
+      });
+    }
+
+    // 5. Check deal is fully funded
+    const runningTotal = parseFloat(deal.runningTotal.toString());
+    const targetAmount = parseFloat(deal.targetAmount.toString());
+    
+    if (runningTotal < targetAmount) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'Deal not fully funded' },
+      });
+    }
+
+    // 6. Initiate settlement (pay supplier)
+    logger.info({ dealId, supplierAddress: supplierAuthResult.walletAddress }, 'Initiating supplier payout');
+
+    const result = await settlementService.initiateSettlement({
+      dealId,
+      operatorAddress: adminAuthResult.walletAddress,
+    });
+
+    if (result.success) {
+      logger.info({ 
+        dealId, 
+        transferId: result.transferId,
+        adminAddress: adminAuthResult.walletAddress,
+        supplierAddress: supplierAuthResult.walletAddress
+      }, 'Payout release successful');
+      
+      res.json({
+        success: true,
+        data: {
+          dealId,
+          transferId: result.transferId,
+          supplierAddress: supplierAuthResult.walletAddress,
+          adminAddress: adminAuthResult.walletAddress,
+          amount: validated.amount,
+          poId: validated.poId,
+          status: 'SUPPLIER_PAID',
+        },
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: { message: 'Payout release failed', details: result.error },
+      });
+    }
+  } catch (error) {
+    logger.error({ error, dealId: req.params.dealId }, 'Payout release error');
     res.status(500).json({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Failed' 

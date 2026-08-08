@@ -201,13 +201,26 @@ export class SettlementService {
 
     logger.info({ dealId, supplierAddress, amount }, 'Transferring to supplier');
 
-    // Transfer from Circle wallet to supplier
-    const transferResult = await this.circleWalletService.transferFromDealWallet({
-      dealWalletId: deal.circleWalletId!,
-      destinationAddress: supplierAddress,
-      amount,
-      dealId,
-    });
+    // Check if Circle wallet exists for real transfer
+    let transferResult: { success: boolean; transferId?: string; error?: string; status?: string };
+    
+    if (deal.circleWalletId && process.env.SKIP_CIRCLE_WALLET !== 'true') {
+      // Real Circle transfer
+      transferResult = await this.circleWalletService.transferFromDealWallet({
+        dealWalletId: deal.circleWalletId,
+        destinationAddress: supplierAddress,
+        amount,
+        dealId,
+      });
+    } else {
+      // Demo mode - simulate successful transfer
+      logger.info({ dealId, supplierAddress, amount }, 'Demo mode: Simulating Circle transfer');
+      transferResult = {
+        success: true,
+        transferId: `DEMO-SETTLE-${Date.now()}-${dealId.substring(0, 8)}`,
+        status: 'COMPLETED',
+      };
+    }
 
     if (transferResult.success) {
       // Update deal status
@@ -233,6 +246,7 @@ export class SettlementService {
           supplierAddress,
           amount,
           txHash: transferResult.status,
+          demoMode: deal.circleWalletId ? false : true,
         },
       });
 

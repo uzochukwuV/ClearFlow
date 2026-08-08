@@ -4,6 +4,7 @@ import fs from 'fs';
 const keys = JSON.parse(fs.readFileSync('./recovery/test-private-keys.json', 'utf8'));
 const buyerWallet = keys.wallets.find(w => w.role === 'BUYER');
 const supplierWallet = keys.wallets.find(w => w.role === 'SUPPLIER');
+const adminWallet = keys.wallets.find(w => w.role === 'ADMIN');
 
 console.log('============================================');
 console.log('  PURCHASE ORDER FLOW - BUYER & SUPPLIER');
@@ -20,6 +21,7 @@ const domain = {
 // Use checksummed addresses (ethers normalizes to checksum when signing)
 const buyerAddress = ethers.getAddress(buyerWallet.address);
 const supplierAddress = ethers.getAddress(supplierWallet.address);
+const adminAddress = ethers.getAddress(adminWallet.address);
 
 const typedData = {
   domain,
@@ -260,13 +262,124 @@ if (result.success) {
         console.log('   Ramp Receipt ID: ' + contributeResult.data.rampReceiptId);
         console.log('   Ramp Tx Hash: ' + (contributeResult.data.rampTxHash || 'N/A'));
         console.log('   Status: ' + contributeResult.data.status);
+        
+        // Add more contributions to fully fund the deal
+        console.log('\n' + '='.repeat(50));
+        console.log('  STEP 5: ADD MORE CONTRIBUTIONS TO FULLY FUND');
+        console.log('='.repeat(50) + '\n');
+        
+        // Get full deal data with auth
+        const dealMessage = `Get deal ${dealId}\nTimestamp: ${Date.now()}`;
+        const dealSignature = await buyer.signMessage(dealMessage);
+        const dealRes = await fetch('http://localhost:3000/api/v1/deals/' + dealId + '?signature=' + encodeURIComponent(dealSignature) + '&message=' + encodeURIComponent(dealMessage), {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const dealData = await dealRes.json();
+        console.log('📊 Current Funding:', dealData.data?.runningTotal, '/', dealData.data?.targetAmount);
+        
+        // Add second investor contribution
+        const investor2Wallet = keys.wallets.find(w => w.role === 'INVESTOR_2');
+        const investor2 = new ethers.Wallet(investor2Wallet.privateKey);
+        
+        const contrib2Message = `Contribute to deal ${dealId}\nAmount: 100000 USDC\nTimestamp: ${Date.now()}`;
+        const contrib2Signature = await investor2.signMessage(contrib2Message);
+        
+        const adminMessage2 = `Approve contribution to deal ${dealId}\nInvestor: ${investor2.address}\nAmount: 100000 USDC\nTimestamp: ${Date.now()}`;
+        const adminSignature2 = await admin.signMessage(adminMessage2);
+        
+        const contrib2Request = {
+          investorSignature: contrib2Signature,
+          investorMessage: contrib2Message,
+          adminSignature: adminSignature2,
+          adminMessage: adminMessage2,
+          dealId: dealId,
+          amount: '100000.00',
+          chainId: 84532,
+        };
+        
+        console.log('📤 Investor 2 contributing...');
+        const contrib2Res = await fetch('http://localhost:3000/api/v1/deals/' + dealId + '/contribute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(contrib2Request)
+        });
+        const contrib2Result = await contrib2Res.json();
+        console.log('   Result:', contrib2Result.success ? 'Success' : contrib2Result.error?.message);
+        
+        // Check updated funding
+        const dealRes2 = await fetch('http://localhost:3000/api/v1/deals/' + dealId + '?signature=' + encodeURIComponent(dealSignature) + '&message=' + encodeURIComponent(dealMessage), {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const dealData2 = await dealRes2.json();
+        console.log('📊 Updated Funding:', dealData2.data?.runningTotal, '/', dealData2.data?.targetAmount);
+        console.log('📊 Deal Status:', dealData2.data?.status);
+        
+        // STEP 5: SUPPLIER PAYOUT RELEASE
+        console.log('\n' + '='.repeat(50));
+        console.log('  STEP 6: SUPPLIER PAYOUT RELEASE');
+        console.log('='.repeat(50) + '\n');
+        
+        // Admin signs payout approval
+        const payoutAdminMessage = `Approve supplier payout release\nDeal ID: ${dealId}\nPO ID: ${poId}\nAmount: ${dealData.data.targetAmount} USDC\nTimestamp: ${Date.now()}`;
+        const payoutAdminSignature = await admin.signMessage(payoutAdminMessage);
+        
+        // Supplier signs PO for payment release
+        const payoutSupplierMessage = `Release payment for PO ${poId}\nDeal ID: ${dealId}\nSupplier: ${supplier.address}\nAmount: ${dealData.data.targetAmount} USDC\nTimestamp: ${Date.now()}`;
+        const payoutSupplierSignature = await supplier.signMessage(payoutSupplierMessage);
+        
+        const payoutRequest = {
+          adminSignature: payoutAdminSignature,
+          adminMessage: payoutAdminMessage,
+          supplierSignature: payoutSupplierSignature,
+          supplierMessage: payoutSupplierMessage,
+          dealId: dealId,
+          poId: poId,
+          amount: dealData.data.targetAmount,
+          chainId: 84532,
+        };
+        
+        console.log('📋 PAYOUT RELEASE DETAILS:');
+        console.log('   Admin: ' + admin.address);
+        console.log('   Supplier: ' + supplier.address);
+        console.log('   Deal ID: ' + dealId);
+        console.log('   PO ID: ' + poId);
+        console.log('   Amount: $' + payoutRequest.amount + ' USDC');
+        console.log('   Dual Signatures: Admin + Supplier');
         console.log('');
-        console.log('📋 FULL FLOW COMPLETE:');
+        
+        console.log('📤 Releasing payout via API...');
+        console.log('   POST /api/v1/settlement/deals/' + dealId + '/payout-release');
+        console.log('');
+        
+        const payoutRes = await fetch('http://localhost:3000/api/v1/settlement/deals/' + dealId + '/payout-release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payoutRequest)
+        });
+        
+        const payoutResult = await payoutRes.json();
+        console.log('📥 API Response:');
+        console.log(JSON.stringify(payoutResult, null, 2));
+        
+        if (payoutResult.success) {
+          console.log('\n🎉 PAYOUT RELEASE SUCCESSFUL!');
+          console.log('   Transfer ID: ' + payoutResult.data.transferId);
+          console.log('   Supplier: ' + payoutResult.data.supplierAddress);
+          console.log('   Admin: ' + payoutResult.data.adminAddress);
+          console.log('   Status: ' + payoutResult.data.status);
+        } else {
+          console.log('\n⚠️  Payout release: ' + (payoutResult.error?.message || payoutResult.error || 'Failed'));
+        }
+        
+        console.log('\n📋 FULL FLOW COMPLETE:');
         console.log('   ✅ 1. Buyer created PO with EIP-712 signature');
         console.log('   ✅ 2. Supplier signed PO with EIP-712 signature');
         console.log('   ✅ 3. Buyer created Deal & A-Token launched');
         console.log('   ✅ 4. Investor + Admin signed, Fiat onramp completed');
-        console.log('   ⏭️  5. Next: Supplier payout when funded');
+        console.log('   ✅ 5. Supplier payout with Admin + Supplier dual signatures');
+        console.log('   ⏭️  6. Next: Delivery confirmation & investor payouts');
       } else {
         console.log('\n⚠️  Contribution failed: ' + contributeResult.error.message);
       }

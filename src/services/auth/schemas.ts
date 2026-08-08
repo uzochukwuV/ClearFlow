@@ -13,6 +13,7 @@ export const MessageType = {
   VERIFY: 'VERIFY',
   STATUS: 'STATUS',
   ELIGIBILITY: 'ELIGIBILITY',
+  PAYOUT_RELEASE: 'PAYOUT_RELEASE',
 } as const;
 
 // Generate authentication message for a specific action
@@ -98,4 +99,24 @@ export const unfreezeRequestSchema = z.object({
   message: z.string().min(1, 'Message is required'),
   targetWallet: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid target wallet address'),
   chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+});
+
+// Payout Release Request - requires both admin and supplier signatures
+// Admin approves payout release, Supplier signs off on PO for payment
+export const payoutReleaseRequestSchema = z.object({
+  // Admin signature - platform approves payout
+  adminSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid admin signature'),
+  adminMessage: z.string().min(1, 'Admin message is required'),
+
+  // Supplier signature - supplier signs PO for payment release
+  supplierSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid supplier signature'),
+  supplierMessage: z.string().min(1, 'Supplier message is required'),
+
+  // Payout details
+  dealId: z.string().uuid('Invalid deal ID'),
+  amount: z.string().min(1, 'Amount is required'),
+  poId: z.string().uuid('PO ID for supplier verification'),
+
+  // Chain
+  chainId: z.number().int().positive().default(84532),
 });
