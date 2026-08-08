@@ -470,56 +470,77 @@ Thank you for investing with ClearFlow!
 
 ---
 
-## 12. Missing Endpoints (Needs Implementation)
+## 12. Implemented Backend Endpoints ✅
 
-The following endpoints are **not yet implemented** in the backend and need to be created:
+All the following endpoints are now implemented in the backend:
 
-### 12.1 User Management
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/users/:address` | Check if user exists | HIGH |
-| `POST /api/v1/users/register` | Register new user | HIGH |
-| `PUT /api/v1/users/:address` | Update user profile | MEDIUM |
-| `GET /api/v1/users/:address/portfolio` | Get portfolio summary | HIGH |
+### 12.1 Dashboard Aggregations
+| Endpoint | Description |
+|----------|-------------|
+| `GET /dashboard/buyer/:address` | Buyer dashboard with POs, deals, stats |
+| `GET /dashboard/supplier/:address` | Supplier dashboard with pending POs, payouts |
+| `GET /dashboard/investor/:address` | Investor dashboard with portfolio, contributions, claims |
+| `GET /dashboard/admin/:address` | Admin dashboard with all deals and pending actions |
 
-### 12.2 Dashboard Aggregations
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/dashboard/buyer` | Buyer dashboard data | HIGH |
-| `GET /api/v1/dashboard/supplier` | Supplier dashboard data | HIGH |
-| `GET /api/v1/dashboard/investor` | Investor dashboard data | HIGH |
-| `GET /api/v1/users/:address/contributions` | User's contributions | HIGH |
-| `GET /api/v1/users/:address/holdings` | User's token holdings | HIGH |
+### 12.2 Portfolio & Holdings
+| Endpoint | Description |
+|----------|-------------|
+| `GET /portfolio/:address` | Portfolio summary with totals and yield |
+| `GET /portfolio/:address/holdings` | Detailed token holdings per deal |
+| `GET /portfolio/:address/contributions` | Contribution history |
 
 ### 12.3 Deal Discovery
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/deals?status=OPEN` | List open deals for investors | HIGH |
-| `GET /api/v1/deals/:dealId/timeline` | Deal audit trail | MEDIUM |
+| Endpoint | Description |
+|----------|-------------|
+| `GET /deals-discovery` | List deals with filters (status, minYield, maxAmount, country, limit, offset) |
+| `GET /deals-discovery/open` | List all open deals for investor discovery |
+| `GET /deals-discovery/:dealId` | Deal details with contributions, repayments, payouts |
+| `GET /deals-discovery/:dealId/timeline` | Deal audit trail |
 
-### 12.4 Settlement & Distribution
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/settlement/deals/:dealId/repayment-info` | Get repayment amounts | HIGH |
-| `GET /api/v1/settlement/payouts?status=PENDING` | Admin: pending payouts | MEDIUM |
-| `POST /api/v1/settlement/deals/:dealId/distribute` | Auto-distribute to investors | HIGH |
+### 12.4 Investor Claims
+| Endpoint | Description |
+|----------|-------------|
+| `GET /claims/investor/:address` | All claimable payouts for investor |
+| `GET /claims/:dealId/investor/:address` | Claimable amount for specific deal |
+| `POST /claims/:dealId/investor/:address/claim` | Claim payout with EIP-712 signature |
+| `GET /claims/history/:address` | Claim history (pending and claimed) |
 
-### 12.5 Investor Claims
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/settlement/deals/:dealId/investor/:address/claim` | Get claimable amount | HIGH |
-| `POST /api/v1/settlement/deals/:dealId/investor/:address/claim` | Claim payout | HIGH |
+### 12.5 Fiat Onramp (Already Existed)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /ramp/currencies` | Supported fiat currencies |
+| `GET /ramp/countries` | Supported countries |
+| `POST /ramp/quote` | Get on-ramp quote |
+| `POST /ramp/widget` | Create widget URL for payment |
+| `POST /ramp/on-ramp/quote` | On-ramp quote (fiat → USDC) |
+| `POST /ramp/off-ramp/quote` | Off-ramp quote (USDC → fiat) |
+| `GET /ramp/order/:orderId` | Order status |
+| `POST /ramp/faucet` | Request test tokens |
 
-### 12.6 Fiat Onramp
-| Endpoint | Description | Priority |
-|----------|-------------|----------|
-| `GET /api/v1/ramp/onramp-url` | Get Ramp widget URL | HIGH |
+### 12.6 Settlement Endpoints (Already Existed)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /settlement/deals/:dealId/status` | Settlement status |
+| `POST /settlement/deals/:dealId/buyer-repay` | Buyer makes repayment |
+| `POST /settlement/deals/:dealId/payout-release` | Release payout to supplier |
 
-### 12.7 Notifications
+---
+
+## 13. Missing Endpoints (Low Priority)
+
+The following endpoints are **not yet implemented** and can be added later:
+
+### 13.1 User Management
 | Endpoint | Description | Priority |
 |----------|-------------|----------|
-| `GET /api/v1/notifications` | User notifications | LOW |
-| `PUT /api/v1/notifications/:id/read` | Mark as read | LOW |
+| `POST /users/register` | Register new user | MEDIUM |
+| `PUT /users/:address` | Update user profile | LOW |
+
+### 13.2 Notifications
+| Endpoint | Description | Priority |
+|----------|-------------|----------|
+| `GET /notifications` | User notifications | LOW |
+| `PUT /notifications/:id/read` | Mark as read | LOW |
 
 ---
 
