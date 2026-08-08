@@ -1,0 +1,268 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  BUYER
+  SUPPLIER
+  INVESTOR
+  PLATFORM
+}
+
+enum ApassStatus {
+  PENDING
+  ACTIVE
+  FROZEN
+  EXPIRED
+}
+
+enum PoStatus {
+  DRAFT
+  PENDING_BUYER_SIGNATURE
+  PENDING_SUPPLIER_SIGNATURE
+  SIGNED
+  CANCELLED
+}
+
+enum DealStatus {
+  DRAFT
+  OPEN
+  CLOSED_FUNDED
+  CLOSED_SHORTFALL
+  FUNDED
+  AWAITING_DELIVERY
+  DELIVERED
+  AWAITING_REPAYMENT
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+enum ContributionType {
+  CRYPTO
+  FIAT
+}
+
+enum ContributionStatus {
+  PENDING
+  CONFIRMED
+  REFUNDED
+  FAILED
+}
+
+enum DeliveryStatus {
+  PENDING
+  BUYER_CONFIRMED
+  SUPPLIER_CONFIRMED
+  CONFIRMED
+}
+
+model User {
+  id              String       @id @default(uuid())
+  walletAddress   String       @unique
+  chain           String       @default("polygon")
+  userType        String
+  apassId         String?      @unique
+  apassStatus     String  @default("PENDING")
+  apassTier       Int?
+  apassCountries  String[]
+  apassExpiration DateTime?
+  apassTxHash     String?
+  customerId      String?
+  email           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  purchaseOrdersAsBuyer    PurchaseOrder[] @relation("BuyerOrders")
+  purchaseOrdersAsSupplier PurchaseOrder[] @relation("SupplierOrders")
+  contributions     Contribution[]
+  investorPayouts  InvestorPayout[]
+  poSignatures     POSignature[]
+
+  @@index([walletAddress])
+  @@index([apassId])
+}
+
+model PurchaseOrder {
+  id              String    @id @default(uuid())
+  poReference     String
+  buyerId         String
+  supplierId      String
+  amount          String    // Store as string to preserve exact format (e.g., "250000.00")
+  currency        String    @default("USD")
+  quantity        Int
+  advanceAmount   String    // Store as string to preserve exact format
+  advancePercent  Int
+  deliveryDate    DateTime
+  status          String  @default("DRAFT")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  buyer           User      @relation("BuyerOrders", fields: [buyerId], references: [id])
+  supplier        User      @relation("SupplierOrders", fields: [supplierId], references: [id])
+  signatures      POSignature[]
+  deal            Deal?
+
+  @@unique([buyerId, poReference])
+  @@index([buyerId])
+  @@index([supplierId])
+}
+
+model POSignature {
+  id              String    @id @default(uuid())
+  purchaseOrderId String
+  signer          UserType
+  signerId        String
+  hash            String
+  signature       String
+  signedAt        DateTime  @default(now())
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  signerUser      User      @relation(fields: [signerId], references: [id])
+
+  @@unique([purchaseOrderId, signer])
+  @@index([hash])
+}
+
+model Deal {
+  id                  String      @id @default(uuid())
+  purchaseOrderId     String      @unique
+  chain               String      @default("polygon")
+  targetAmount        Decimal     @db.Decimal(20, 2)
+  runningTotal        Decimal     @db.Decimal(20, 2)  @default(0)
+  currency            String      @default("USDC")
+  fundingDeadline     DateTime
+  yieldPercent        Int
+  status              String  @default("DRAFT")
+
+  circleWalletId      String?
+  circleWalletAddress String?
+
+  atokenRequestId     String?
+  atokenSymbol        String?
+  atokenAddress       String?
+  totalSupply         Decimal     @db.Decimal(20, 2)  @default(0)
+
+  minInvestorTier     Int         @default(1)
+  eligibleCountries   String[]    @default([])
+
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  purchaseOrder       PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id])
+  contributions       Contribution[]
+  deliveries          Delivery[]
+  repayments          Repayment[]
+  investorPayouts     InvestorPayout[]
+
+  @@index([status])
+  @@index([circleWalletId])
+}
+
+model Contribution {
+  id              String             @id @default(uuid())
+  dealId          String
+  investorId      String
+  amount          String             // Store as string to preserve exact format
+  currency       String             @default("USDC")
+  type            String  @default("CRYPTO")
+  status          String  @default("PENDING")
+
+  txHash          String?
+  fromAddress     String?
+  toAddress       String?
+
+  // Ramp/onramp payment verification
+  rampOrderId     String?
+  rampQuoteToken  String?
+  rampReceiptId   String?            // Receipt ID from Clearverse ramp
+  rampTxHash      String?            // Transaction hash from Clearverse ramp
+
+  confirmedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  deal            Deal      @relation(fields: [dealId], references: [id])
+  investor        User      @relation(fields: [investorId], references: [id])
+
+  @@index([dealId])
+  @@index([investorId])
+  @@index([txHash])
+  @@index([rampOrderId])
+}
+
+model Delivery {
+  id              String         @id @default(uuid())
+  dealId          String
+  status          String  @default("PENDING")
+
+  buyerSignature      String?
+  buyerSignedAt       DateTime?
+  supplierSignature   String?
+  supplierSignedAt     DateTime?
+
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  deal            Deal           @relation(fields: [dealId], references: [id])
+
+  @@index([dealId])
+}
+
+model Repayment {
+  id              String    @id @default(uuid())
+  dealId          String
+  amount          String    // Store as string to preserve exact format
+  currency        String    @default("USDC")
+  txHash          String?
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  deal            Deal      @relation(fields: [dealId], references: [id])
+
+  @@index([dealId])
+  @@index([txHash])
+}
+
+model InvestorPayout {
+  id              String    @id @default(uuid())
+  dealId          String
+  investorId      String
+  principal       String    // Store as string to preserve exact format
+  yieldAmount     String    // Store as string to preserve exact format
+  total           String    // Store as string to preserve exact format
+  tokenAmount     String    // Store as string to preserve exact format
+
+  status          String    @default("PENDING")
+  txHash          String?
+  bankAccountId   String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  deal            Deal      @relation(fields: [dealId], references: [id])
+  investor        User      @relation(fields: [investorId], references: [id])
+
+  @@index([dealId])
+  @@index([investorId])
+}
+
+model AuditLog {
+  id              String    @id @default(uuid())
+  entityType      String
+  entityId        String
+  action          String
+  actor           String?
+  details         Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
