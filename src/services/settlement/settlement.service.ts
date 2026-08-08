@@ -387,6 +387,7 @@ export class SettlementService {
     success: boolean;
     repaymentId?: string;
     totalReceived?: string;
+    fullyRepaid?: boolean;
     error?: string;
   }> {
     const { dealId, amount, txHash, fromAddress } = params;
@@ -464,6 +465,7 @@ export class SettlementService {
       success: true,
       repaymentId: repayment.id,
       totalReceived: newTotalRepaid.toString(),
+      fullyRepaid,
     };
   }
 
@@ -553,7 +555,10 @@ export class SettlementService {
     });
 
     // Distribute payouts
-    if (deal.circleWalletId) {
+    const skipCircleWallet = process.env.SKIP_CIRCLE_WALLET === 'true';
+    
+    if (deal.circleWalletId && !skipCircleWallet) {
+      // Real Circle transfer
       for (const payout of payouts) {
         try {
           const result = await this.circleWalletService.transferFromDealWallet({
@@ -590,6 +595,33 @@ export class SettlementService {
         } catch (error) {
           logger.error({ error, payout }, 'Failed to distribute payout');
         }
+      }
+    } else {
+      // Demo mode - simulate payouts
+      logger.info({ dealId }, 'Demo mode: Simulating investor payouts');
+      for (const payout of payouts) {
+        await prisma.investorPayout.updateMany({
+          where: {
+            dealId,
+            investorId: payout.investorId,
+            status: 'PENDING',
+          },
+          data: {
+            status: 'COMPLETED',
+            txHash: `DEMO-PAYOUT-${Date.now()}-${payout.investorId.substring(0, 8)}`,
+          },
+        });
+
+        await this.logSettlementEvent({
+          dealId,
+          eventType: SettlementEventType.PAYOUT_DISTRIBUTED,
+          data: {
+            investorId: payout.investorId,
+            amount: payout.totalPayout,
+            txHash: `DEMO-PAYOUT-${Date.now()}`,
+            demoMode: true,
+          },
+        });
       }
     }
 

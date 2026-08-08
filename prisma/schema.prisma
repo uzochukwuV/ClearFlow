@@ -140,6 +140,10 @@ model Deal {
   yieldPercent        Int
   status              String  @default("DRAFT")
 
+  // Delivery deadline - when buyer must confirm receipt and pay up
+  // Investors know their yield timeframe from this
+  deliveryDeadline    DateTime?
+
   circleWalletId      String?
   circleWalletAddress String?
 

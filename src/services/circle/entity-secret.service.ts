@@ -238,6 +238,8 @@ export class EntitySecretService {
     try {
       // Use Circle's register endpoint if we don't have a cached ciphertext
       // In production, you'd cache this or use the recovery file
+      // Note: Developer-controlled wallets require a production API key
+      // Sandbox API may not support this feature
       const response = await fetch(`${this.baseUrl}/v1/entitySecret/ciphertext`, {
         method: 'POST',
         headers: {

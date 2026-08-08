@@ -27,6 +27,10 @@ export const createDealRequestSchema = z.object({
   yieldPercent: z.number().min(0).max(100),
   fundingDeadline: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
   
+  // Delivery deadline - when buyer must confirm receipt and pay up
+  // Investors know their yield timeframe from this
+  deliveryDeadline: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)).optional(),
+  
   // Compliance rules for POF A-Token
   minInvestorTier: z.number().int().min(0).default(1),
   eligibleCountries: z.array(z.string().length(2)).default([]),

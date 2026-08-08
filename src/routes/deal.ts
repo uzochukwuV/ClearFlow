@@ -53,6 +53,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     targetAmount: validated.targetAmount,
     yieldPercent: validated.yieldPercent,
     fundingDeadline: new Date(validated.fundingDeadline),
+    deliveryDeadline: validated.deliveryDeadline ? new Date(validated.deliveryDeadline) : undefined,
     minInvestorTier: validated.minInvestorTier,
     eligibleCountries: validated.eligibleCountries,
     chain: 'monad',

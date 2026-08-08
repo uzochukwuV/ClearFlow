@@ -168,6 +168,7 @@ if (result.success) {
       targetAmount: '150000.00',  // Advance amount to raise (60% of PO)
       yieldPercent: 8.5,  // 8.5% yield for investors
       fundingDeadline: '2026-09-30T23:59:59Z',
+      deliveryDeadline: '2026-10-31T23:59:59Z',  // Buyer must receive goods and pay up by this date
       minInvestorTier: 1,
       eligibleCountries: ['US', 'CN', 'SG'],
       chainId: 84532,
@@ -177,6 +178,7 @@ if (result.success) {
     console.log('   Target Amount: $' + dealRequest.targetAmount + ' USDC');
     console.log('   Yield: ' + dealRequest.yieldPercent + '%');
     console.log('   Funding Deadline: ' + dealRequest.fundingDeadline);
+    console.log('   Delivery Deadline: ' + dealRequest.deliveryDeadline);
     console.log('   Eligible Countries: ' + dealRequest.eligibleCountries.join(', '));
     console.log('');
     
@@ -369,6 +371,111 @@ if (result.success) {
           console.log('   Supplier: ' + payoutResult.data.supplierAddress);
           console.log('   Admin: ' + payoutResult.data.adminAddress);
           console.log('   Status: ' + payoutResult.data.status);
+          
+          // STEP 7: BUYER CONFIRMS DELIVERY
+          console.log('\n' + '='.repeat(50));
+          console.log('  STEP 7: BUYER CONFIRMS DELIVERY');
+          console.log('='.repeat(50) + '\n');
+          
+          const buyerConfirmMessage = `Confirm delivery receipt for deal ${dealId}\nPO: ${poId}\nBuyer: ${buyer.address}\nTimestamp: ${Date.now()}`;
+          const buyerConfirmSignature = await buyer.signMessage(buyerConfirmMessage);
+          
+          console.log('📋 BUYER CONFIRM DELIVERY:');
+          console.log('   Buyer: ' + buyer.address);
+          console.log('   Deal ID: ' + dealId);
+          console.log('');
+          
+          const buyerConfirmRes = await fetch('http://localhost:3000/api/v1/settlement/deals/' + dealId + '/buyer-confirm-delivery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              signature: buyerConfirmSignature,
+              message: buyerConfirmMessage,
+            })
+          });
+          
+          const buyerConfirmResult = await buyerConfirmRes.json();
+          console.log('📥 API Response:');
+          console.log(JSON.stringify(buyerConfirmResult, null, 2));
+          
+          if (buyerConfirmResult.success) {
+            console.log('\n✅ Delivery confirmed by buyer');
+            console.log('   Status: ' + buyerConfirmResult.data.status);
+            
+            // STEP 8: BUYER MAKES REPAYMENT
+            console.log('\n' + '='.repeat(50));
+            console.log('  STEP 8: BUYER MAKES REPAYMENT (PRINCIPAL + YIELD)');
+            console.log('='.repeat(50) + '\n');
+            
+            // Calculate total repayment: principal + yield
+            const principal = parseFloat(dealData.data.targetAmount);
+            const yieldAmount = principal * 0.085; // 8.5% yield
+            const totalRepayment = principal + yieldAmount;
+            
+            console.log('📋 REPAYMENT DETAILS:');
+            console.log('   Principal: $' + principal.toFixed(2) + ' USDC');
+            console.log('   Yield (8.5%): $' + yieldAmount.toFixed(2) + ' USDC');
+            console.log('   Total Repayment: $' + totalRepayment.toFixed(2) + ' USDC');
+            console.log('');
+            
+            const buyerRepayMessage = `Repay deal ${dealId}\nAmount: ${totalRepayment.toFixed(2)} USDC\nPrincipal: ${principal}\nYield: ${yieldAmount.toFixed(2)}\nTimestamp: ${Date.now()}`;
+            const buyerRepaySignature = await buyer.signMessage(buyerRepayMessage);
+            
+            const buyerRepayRes = await fetch('http://localhost:3000/api/v1/settlement/deals/' + dealId + '/buyer-repay', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                signature: buyerRepaySignature,
+                message: buyerRepayMessage,
+                txHash: 'DEMO-REPAY-' + Date.now(),
+              })
+            });
+            
+            const buyerRepayResult = await buyerRepayRes.json();
+            console.log('📥 API Response:');
+            console.log(JSON.stringify(buyerRepayResult, null, 2));
+            
+            if (buyerRepayResult.success) {
+              console.log('\n🎉 REPAYMENT SUCCESSFUL!');
+              console.log('   Principal: $' + buyerRepayResult.data.principal);
+              console.log('   Yield: $' + buyerRepayResult.data.yieldAmount);
+              console.log('   Total Repaid: $' + buyerRepayResult.data.totalRepayment);
+              console.log('   Status: ' + buyerRepayResult.data.status);
+              
+              // STEP 9: CHECK INVESTOR PAYOUTS
+              console.log('\n' + '='.repeat(50));
+              console.log('  STEP 9: INVESTOR PAYOUTS');
+              console.log('='.repeat(50) + '\n');
+              
+              const payoutsRes = await fetch('http://localhost:3000/api/v1/settlement/deals/' + dealId + '/payouts', {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              
+              const payoutsResult = await payoutsRes.json();
+              console.log('📋 INVESTOR PAYOUTS:');
+              if (payoutsResult.payouts && payoutsResult.payouts.length > 0) {
+                payoutsResult.payouts.forEach((p, i) => {
+                  console.log(`   Investor ${i+1}: $${p.total} (Principal: $${p.principal}, Yield: $${p.yieldAmount})`);
+                });
+              }
+              
+              // STEP 10: CHECK FINAL DEAL STATUS
+              console.log('\n' + '='.repeat(50));
+              console.log('  STEP 10: FINAL DEAL STATUS');
+              console.log('='.repeat(50) + '\n');
+              
+              const finalDealRes = await fetch('http://localhost:3000/api/v1/settlement/deals/' + dealId + '/status', {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              
+              const finalStatus = await finalDealRes.json();
+              console.log('📊 SETTLEMENT STATUS:');
+              console.log('   Status: ' + finalStatus.settlement?.status);
+              console.log('   Completion: ' + finalStatus.settlement?.completionPercentage + '%');
+            }
+          }
         } else {
           console.log('\n⚠️  Payout release: ' + (payoutResult.error?.message || payoutResult.error || 'Failed'));
         }
@@ -379,7 +486,10 @@ if (result.success) {
         console.log('   ✅ 3. Buyer created Deal & A-Token launched');
         console.log('   ✅ 4. Investor + Admin signed, Fiat onramp completed');
         console.log('   ✅ 5. Supplier payout with Admin + Supplier dual signatures');
-        console.log('   ⏭️  6. Next: Delivery confirmation & investor payouts');
+        console.log('   ✅ 6. Buyer confirmed delivery (EIP-712 signature)');
+        console.log('   ✅ 7. Buyer made repayment (principal + yield)');
+        console.log('   ✅ 8. Investors received payouts');
+        console.log('   ✅ Deal completed!');
       } else {
         console.log('\n⚠️  Contribution failed: ' + contributeResult.error.message);
       }

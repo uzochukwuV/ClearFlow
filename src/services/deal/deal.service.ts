@@ -87,6 +87,7 @@ export class DealService {
     targetAmount: string;
     yieldPercent: number;
     fundingDeadline: Date;
+    deliveryDeadline?: Date;
     minInvestorTier: number;
     eligibleCountries: string[];
     chain: string;
@@ -97,6 +98,7 @@ export class DealService {
       targetAmount, 
       yieldPercent, 
       fundingDeadline,
+      deliveryDeadline,
       minInvestorTier,
       eligibleCountries,
       chain
@@ -136,6 +138,7 @@ export class DealService {
           targetAmount: parseFloat(targetAmount),
           currency: 'USDC',
           fundingDeadline,
+          deliveryDeadline,
           yieldPercent,
           status: "DRAFT",
           minInvestorTier,

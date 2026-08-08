@@ -289,6 +289,105 @@ router.post('/deals/:dealId/confirm-delivery', async (req: Request, res: Respons
 });
 
 /**
+ * POST /settlement/deals/:dealId/buyer-confirm-delivery
+ * 
+ * Buyer confirms receipt of goods with EIP-712 signature.
+ * This triggers the repayment phase where buyer pays back principal + yield.
+ */
+router.post('/deals/:dealId/buyer-confirm-delivery', async (req: Request, res: Response) => {
+  try {
+    const dealId = req.params.dealId as string;
+    const { signature, message, notes } = req.body;
+
+    if (!signature || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: { message: 'signature and message are required' }
+      });
+    }
+
+    // Verify buyer signature
+    const authService = getAuthService();
+    const authResult = authService.verifySignature(signature, message);
+    
+    if (!authResult.valid || !authResult.walletAddress) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid buyer signature', details: authResult.error },
+      });
+    }
+
+    // Verify the buyer is the PO buyer
+    const deal = await prisma.deal.findUnique({
+      where: { id: dealId },
+      include: { purchaseOrder: { include: { buyer: true } } },
+    });
+
+    if (!deal) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'Deal not found' },
+      });
+    }
+
+    const buyerAddress = deal.purchaseOrder.buyer.walletAddress.toLowerCase();
+    if (authResult.walletAddress.toLowerCase() !== buyerAddress) {
+      return res.status(403).json({
+        success: false,
+        error: { message: 'Only the PO buyer can confirm delivery' },
+      });
+    }
+
+    // Check deal status - must be in delivery phase
+    if (!['CLOSED_FUNDED', 'AWAITING_DELIVERY', 'AWAITING_REPAYMENT'].includes(deal.status)) {
+      return res.status(400).json({
+        success: false,
+        error: { message: `Deal must be funded. Current status: ${deal.status}` },
+      });
+    }
+
+    logger.info({ dealId, buyerAddress: authResult.walletAddress }, 'Buyer confirming delivery');
+
+    const result = await settlementService.confirmDelivery({
+      dealId,
+      confirmerAddress: authResult.walletAddress,
+      confirmerType: 'BUYER',
+      notes,
+    });
+
+    if (result.success) {
+      // Update deal status to awaiting repayment
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: { status: 'AWAITING_REPAYMENT' },
+      });
+
+      res.json({ 
+        success: true, 
+        data: {
+          dealId,
+          deliveryConfirmed: result.deliveryConfirmed,
+          buyerConfirmed: true,
+          buyerAddress: authResult.walletAddress,
+          status: 'AWAITING_REPAYMENT',
+          message: result.deliveryConfirmed 
+            ? 'Delivery fully confirmed. Repayment phase now active.'
+            : 'Delivery confirmed by buyer. Awaiting supplier confirmation.',
+        },
+      });
+    } else {
+      res.status(400).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    logger.error({ error, dealId: req.params.dealId }, 'Buyer confirm delivery error');
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed' 
+    });
+  }
+});
+
+/**
  * POST /settlement/deals/:dealId/repay
  * 
  * Record repayment from buyer
@@ -326,6 +425,116 @@ router.post('/deals/:dealId/repay', async (req: Request, res: Response) => {
     }
   } catch (error) {
     logger.error({ error, dealId: req.params.dealId }, 'Repayment error');
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed' 
+    });
+  }
+});
+
+/**
+ * POST /settlement/deals/:dealId/buyer-repay
+ * 
+ * Buyer pays back principal + yield with EIP-712 signature.
+ * Calculates: targetAmount * (1 + yieldPercent/100)
+ */
+router.post('/deals/:dealId/buyer-repay', async (req: Request, res: Response) => {
+  try {
+    const dealId = req.params.dealId as string;
+    const { signature, message, txHash } = req.body;
+
+    if (!signature || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: { message: 'signature and message are required' }
+      });
+    }
+
+    // Verify buyer signature
+    const authService = getAuthService();
+    const authResult = authService.verifySignature(signature, message);
+    
+    if (!authResult.valid || !authResult.walletAddress) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid buyer signature', details: authResult.error },
+      });
+    }
+
+    // Verify the buyer is the PO buyer
+    const deal = await prisma.deal.findUnique({
+      where: { id: dealId },
+      include: { 
+        purchaseOrder: { include: { buyer: true } },
+        repayments: true,
+      },
+    });
+
+    if (!deal) {
+      return res.status(404).json({
+        success: false,
+        error: { message: 'Deal not found' },
+      });
+    }
+
+    const buyerAddress = deal.purchaseOrder.buyer.walletAddress.toLowerCase();
+    if (authResult.walletAddress.toLowerCase() !== buyerAddress) {
+      return res.status(403).json({
+        success: false,
+        error: { message: 'Only the PO buyer can make repayment' },
+      });
+    }
+
+    // Calculate repayment amount: principal + yield
+    const principal = parseFloat(deal.targetAmount.toString());
+    const yieldAmount = principal * (deal.yieldPercent / 100);
+    const totalRepayment = principal + yieldAmount;
+    
+    // Check what's already been repaid
+    const alreadyRepaid = deal.repayments
+      .filter(r => r.paidAt)
+      .reduce((sum, r) => sum + parseFloat(r.amount.toString()), 0);
+    
+    const remaining = totalRepayment - alreadyRepaid;
+
+    logger.info({ 
+      dealId, 
+      buyerAddress: authResult.walletAddress,
+      principal,
+      yieldAmount,
+      totalRepayment,
+      alreadyRepaid,
+      remaining
+    }, 'Buyer repayment request');
+
+    const result = await settlementService.recordRepayment({
+      dealId,
+      amount: remaining.toString(),
+      txHash: txHash || `DEMO-REPAY-${Date.now()}`,
+      fromAddress: authResult.walletAddress,
+    });
+
+    if (result.success) {
+      res.json({ 
+        success: true, 
+        data: {
+          dealId,
+          buyerAddress: authResult.walletAddress,
+          principal,
+          yieldPercent: deal.yieldPercent,
+          yieldAmount: yieldAmount.toString(),
+          totalRepayment: totalRepayment.toString(),
+          repaidAmount: remaining.toString(),
+          totalReceived: result.totalReceived,
+          fullyRepaid: result.fullyRepaid,
+          status: result.fullyRepaid ? 'READY_FOR_DISTRIBUTION' : 'PARTIAL_REPAYMENT',
+        },
+      });
+    } else {
+      res.status(400).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    logger.error({ error, dealId: req.params.dealId }, 'Buyer repay error');
     res.status(500).json({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Failed' 
