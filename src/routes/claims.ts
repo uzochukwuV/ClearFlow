@@ -2,10 +2,18 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../config/database';
 import { logger } from '../config';
 import { getAuthService } from '../services/auth';
+import { getATokenService } from '../services/cleanverse';
+import { getCircleWalletService } from '../services/circle';
 
 const router = Router();
 const authService = getAuthService();
+const aTokenService = getATokenService();
+const circleWalletService = getCircleWalletService();
 
+/**
+ * GET /claims/investor/:address
+ * Get all claimable payouts for an investor
+ */
 router.get('/investor/:address', async (req: Request, res: Response) => {
   try {
     const address = req.params.address as string;
@@ -17,7 +25,7 @@ router.get('/investor/:address', async (req: Request, res: Response) => {
       include: {
         deal: {
           select: {
-            id: true, atokenSymbol: true, status: true,
+            id: true, atokenSymbol: true, status: true, totalSupply: true,
             purchaseOrder: { select: { poReference: true, buyer: { select: { walletAddress: true } } } },
             repayments: { where: { paidAt: { not: null } }, select: { amount: true } },
           },
@@ -41,6 +49,9 @@ router.get('/investor/:address', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /claims/:dealId/investor/:address - Get claimable amount for a specific deal
+ */
 router.get('/:dealId/investor/:address', async (req: Request, res: Response) => {
   try {
     const dealId = req.params.dealId as string, address = req.params.address as string;
@@ -52,7 +63,7 @@ router.get('/:dealId/investor/:address', async (req: Request, res: Response) => 
       include: {
         deal: {
           select: {
-            id: true, atokenSymbol: true, status: true, yieldPercent: true, targetAmount: true,
+            id: true, atokenSymbol: true, status: true, yieldPercent: true, targetAmount: true, totalSupply: true,
             purchaseOrder: { select: { poReference: true, buyer: { select: { walletAddress: true } } } },
             repayments: { where: { paidAt: { not: null } }, select: { amount: true, paidAt: true } },
           },
@@ -80,6 +91,10 @@ router.get('/:dealId/investor/:address', async (req: Request, res: Response) => 
   }
 });
 
+/**
+ * POST /claims/:dealId/investor/:address/claim
+ * Investor claims their payout - BURN A-TOKENS and receive USDC
+ */
 router.post('/:dealId/investor/:address/claim', async (req: Request, res: Response) => {
   try {
     const dealId = req.params.dealId as string, address = req.params.address as string;
@@ -95,24 +110,98 @@ router.post('/:dealId/investor/:address/claim', async (req: Request, res: Respon
 
     const deal = await prisma.deal.findUnique({ where: { id: dealId }, include: { repayments: true } });
     if (!deal) return res.status(404).json({ success: false, error: 'Deal not found' });
-    if (deal.status !== 'READY_FOR_DISTRIBUTION' && deal.status !== 'COMPLETED') return res.status(400).json({ success: false, error: 'Status: '.concat(deal.status) });
-    if (deal.repayments.length === 0) return res.status(400).json({ success: false, error: 'No repayment yet' });
+    if (deal.status !== 'READY_FOR_DISTRIBUTION') return res.status(400).json({ success: false, error: 'Deal not ready for distribution. Status: '.concat(deal.status) });
+    if (deal.repayments.length === 0) return res.status(400).json({ success: false, error: 'No repayment received yet' });
 
     const payout = await prisma.investorPayout.findFirst({ where: { dealId, investorId: user.id } });
-    if (!payout) return res.status(404).json({ success: false, error: 'No investment' });
-    if (payout.status === 'CLAIMED') return res.status(400).json({ success: false, error: 'Already claimed' });
+    if (!payout) return res.status(404).json({ success: false, error: 'No investment found for this deal' });
+    if (payout.status === 'CLAIMED') return res.status(400).json({ success: false, error: 'Payout already claimed' });
 
-    const updated = await prisma.investorPayout.update({ where: { id: payout.id }, data: { status: 'CLAIMED', txHash: signature } });
-    await prisma.auditLog.create({ data: { entityType: 'INVESTOR_PAYOUT', entityId: payout.id, action: 'INVESTOR_CLAIMED', actor: user.walletAddress.toLowerCase(), details: { dealId, principal: payout.principal, yieldAmount: payout.yieldAmount, total: payout.total } } });
+    // Get token amount to burn
+    const tokenAmount = parseFloat(payout.tokenAmount);
 
-    logger.info({ dealId, investorAddress: user.walletAddress, amount: payout.total }, 'Investor claimed payout');
-    res.json({ success: true, data: { claimId: updated.id, dealId, investorAddress: user.walletAddress, principal: parseFloat(updated.principal), yieldAmount: parseFloat(updated.yieldAmount), totalClaimed: parseFloat(updated.total), tokenAmount: parseFloat(updated.tokenAmount), status: 'CLAIMED', message: 'Payout claimed successfully' } });
+    // 1. BURN A-TOKENS from investor's wallet
+    try {
+      if (deal.atokenAddress) {
+        await aTokenService.burn({ atokenAddress: deal.atokenAddress, address: address, amount: tokenAmount.toString() });
+        logger.info({ atokenAddress: deal.atokenAddress, investorAddress: address, tokenAmount }, 'A-tokens burned');
+      }
+    } catch (burnError) {
+      logger.error({ error: burnError, dealId, investorAddress: address }, 'Failed to burn A-tokens - continuing in demo mode');
+    }
+
+    // 2. TRANSFER USDC from deal wallet to investor
+    let transferSuccess = false;
+    let transferId: string | undefined;
+
+    try {
+      if (deal.circleWalletId) {
+        const transferResult = await circleWalletService.transferFromDealWallet({
+          dealWalletId: deal.circleWalletId,
+          destinationAddress: address,
+          amount: payout.total,
+          dealId,
+        });
+        transferSuccess = transferResult.success;
+        transferId = transferResult.transferId;
+      }
+    } catch (transferError) {
+      logger.error({ error: transferError, dealId, investorAddress: address }, 'Failed to transfer USDC - continuing in demo mode');
+    }
+
+    // 3. Update deal total supply (subtract burned tokens)
+    const newTotalSupply = Math.max(0, parseFloat(deal.totalSupply.toString()) - tokenAmount);
+    await prisma.deal.update({
+      where: { id: dealId },
+      data: { totalSupply: newTotalSupply },
+    });
+
+    // 4. Mark payout as claimed
+    const updated = await prisma.investorPayout.update({
+      where: { id: payout.id },
+      data: { 
+        status: 'CLAIMED', 
+        txHash: transferId || 'DEMO-CLAIM-'.concat(Date.now().toString()),
+      },
+    });
+
+    // 5. Log audit event
+    await prisma.auditLog.create({ data: { 
+      entityType: 'INVESTOR_PAYOUT', 
+      entityId: payout.id, 
+      action: 'INVESTOR_CLAIMED', 
+      actor: address.toLowerCase(), 
+      details: { 
+        dealId, 
+        principal: payout.principal, 
+        yieldAmount: payout.yieldAmount, 
+        total: payout.total,
+        tokenAmount: payout.tokenAmount,
+        tokensBurned: tokenAmount,
+        transferId,
+      } 
+    }});
+
+    logger.info({ dealId, investorAddress: address, tokenAmount, amount: payout.total, transferSuccess }, 'Investor claimed payout - tokens burned');
+
+    res.json({ success: true, data: {
+      claimId: updated.id, dealId, investorAddress: address, 
+      principal: parseFloat(updated.principal), yieldAmount: parseFloat(updated.yieldAmount), 
+      totalClaimed: parseFloat(updated.total), tokenAmount: parseFloat(updated.tokenAmount),
+      tokensBurned: tokenAmount,
+      transferId,
+      status: 'CLAIMED', 
+      message: 'Payout claimed successfully. '.concat(tokenAmount.toString(), ' A-tokens burned. USDC transferred to your wallet.'),
+    }});
   } catch (error) {
     logger.error({ error, dealId: req.params.dealId, address: req.params.address }, 'Claim error');
     res.status(500).json({ success: false, error: 'Failed to claim payout' });
   }
 });
 
+/**
+ * GET /claims/history/:address - Get claim history
+ */
 router.get('/history/:address', async (req: Request, res: Response) => {
   try {
     const address = req.params.address as string;

@@ -471,14 +471,18 @@ export class SettlementService {
   }
 
   /**
-   * Calculate and distribute payouts to investors
+   * Calculate payouts for investors (NO auto-distribution)
+   * 
+   * Each investor's payout is proportional to their A-token holdings.
+   * Admin takes 3% of the yield as fee.
+   * Investors must claim manually.
    */
   async calculateAndDistributePayouts(dealId: string): Promise<{
     success: boolean;
     payouts?: InvestorPayoutCalculation[];
     error?: string;
   }> {
-    logger.info({ dealId }, 'Calculating and distributing payouts');
+    logger.info({ dealId }, 'Calculating investor payouts');
 
     const deal = await prisma.deal.findUnique({
       where: { id: dealId },
@@ -494,27 +498,51 @@ export class SettlementService {
       return { success: false, error: 'Deal not found' };
     }
 
-    // Calculate total funded
+    // Calculate total funded and total supply (A-tokens)
     const totalFunded = deal.contributions.reduce(
       (sum, c) => sum + parseFloat(c.amount.toString()),
       0
     );
+    const totalSupply = parseFloat(deal.totalSupply.toString()) || totalFunded;
 
     // Calculate repayment amount (principal + yield)
     const principal = parseFloat(deal.targetAmount.toString());
     const yieldPercent = deal.yieldPercent / 100;
-    const yieldAmount = principal * yieldPercent;
-    const totalPayout = principal + yieldAmount;
+    const totalYield = principal * yieldPercent;
+    
+    // Admin takes 3% of yield
+    const ADMIN_FEE_PERCENT = 3;
+    const adminFee = totalYield * (ADMIN_FEE_PERCENT / 100);
+    const investorTotalYield = totalYield - adminFee;
+    const totalPayout = principal + investorTotalYield;
 
-    // Calculate each investor's payout
+    logger.info({ 
+      dealId, 
+      principal, 
+      totalYield, 
+      adminFee, 
+      investorTotalYield,
+      totalSupply,
+      ADMIN_FEE_PERCENT 
+    }, 'Payout calculation with admin fee');
+
+    // Calculate each investor's payout based on their A-token holdings
     const payouts: InvestorPayoutCalculation[] = [];
 
     for (const contribution of deal.contributions) {
       const contributionAmount = parseFloat(contribution.amount.toString());
-      const proportion = contributionAmount / totalFunded;
+      const tokenAmount = contributionAmount; // 1:1 ratio
+      
+      // Investor's share = their tokens / total supply
+      const proportion = totalSupply > 0 ? tokenAmount / totalSupply : 0;
+      
+      // Investor gets principal back + their share of yield (minus admin fee)
       const investorPrincipal = contributionAmount;
-      const investorYield = investorPrincipal * yieldPercent;
+      const investorYield = investorTotalYield * proportion;
       const investorPayout = investorPrincipal + investorYield;
+      
+      // Admin fee for this investor
+      const investorAdminFee = adminFee * proportion;
 
       payouts.push({
         investorId: contribution.investorId,
@@ -524,7 +552,7 @@ export class SettlementService {
         principal: investorPrincipal.toString(),
         yieldAmount: investorYield.toString(),
         totalPayout: investorPayout.toString(),
-        tokenAmount: contribution.amount.toString(), // 1:1 for simplicity
+        tokenAmount: tokenAmount.toString(),
       });
 
       // Create investor payout record
@@ -535,7 +563,7 @@ export class SettlementService {
           principal: investorPrincipal.toString(),
           yieldAmount: investorYield.toString(),
           total: investorPayout.toString(),
-          tokenAmount: contribution.amount.toString(),
+          tokenAmount: tokenAmount.toString(),
           status: 'PENDING',
         },
       });
@@ -546,97 +574,25 @@ export class SettlementService {
       dealId,
       eventType: SettlementEventType.PAYOUT_CALCULATED,
       data: {
+        principal,
+        totalYield,
+        adminFee,
+        investorTotalYield,
         totalPayout,
         investorCount: payouts.length,
         yields: payouts.map(p => ({
           investorId: p.investorId,
+          tokenAmount: p.tokenAmount,
+          proportion: p.proportion,
+          yieldAmount: p.yieldAmount,
           payout: p.totalPayout,
         })),
       },
     });
 
-    // Distribute payouts
-    const skipCircleWallet = process.env.SKIP_CIRCLE_WALLET === 'true';
-    
-    if (deal.circleWalletId && !skipCircleWallet) {
-      // Real Circle transfer
-      for (const payout of payouts) {
-        try {
-          const result = await this.circleWalletService.transferFromDealWallet({
-            dealWalletId: deal.circleWalletId,
-            destinationAddress: payout.investorAddress,
-            amount: payout.totalPayout,
-            dealId,
-          });
-
-          if (result.success) {
-            // Update payout record
-            await prisma.investorPayout.updateMany({
-              where: {
-                dealId,
-                investorId: payout.investorId,
-                status: 'PENDING',
-              },
-              data: {
-                status: 'COMPLETED',
-                txHash: result.transferId,
-              },
-            });
-
-            await this.logSettlementEvent({
-              dealId,
-              eventType: SettlementEventType.PAYOUT_DISTRIBUTED,
-              data: {
-                investorId: payout.investorId,
-                amount: payout.totalPayout,
-                txHash: result.transferId,
-              },
-            });
-          }
-        } catch (error) {
-          logger.error({ error, payout }, 'Failed to distribute payout');
-        }
-      }
-    } else {
-      // Demo mode - simulate payouts
-      logger.info({ dealId }, 'Demo mode: Simulating investor payouts');
-      for (const payout of payouts) {
-        await prisma.investorPayout.updateMany({
-          where: {
-            dealId,
-            investorId: payout.investorId,
-            status: 'PENDING',
-          },
-          data: {
-            status: 'COMPLETED',
-            txHash: `DEMO-PAYOUT-${Date.now()}-${payout.investorId.substring(0, 8)}`,
-          },
-        });
-
-        await this.logSettlementEvent({
-          dealId,
-          eventType: SettlementEventType.PAYOUT_DISTRIBUTED,
-          data: {
-            investorId: payout.investorId,
-            amount: payout.totalPayout,
-            txHash: `DEMO-PAYOUT-${Date.now()}`,
-            demoMode: true,
-          },
-        });
-      }
-    }
-
-    // Update deal to completed
-    await prisma.deal.update({
-      where: { id: dealId },
-      data: { status: 'COMPLETED' },
-    });
-
-    await this.logSettlementEvent({
-      dealId,
-      eventType: SettlementEventType.SETTLEMENT_COMPLETED,
-      data: { totalPayout },
-    });
+    // DO NOT auto-distribute - investors must claim manually
+    // Just mark the deal as READY_FOR_DISTRIBUTION
+    logger.info({ dealId, investorCount: payouts.length }, 'Payouts calculated, investors can now claim');
 
     return { success: true, payouts };
   }

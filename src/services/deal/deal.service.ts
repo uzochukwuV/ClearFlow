@@ -392,15 +392,26 @@ export class DealService {
         });
       }
 
-      // 7. Calculate POF token amount (proportional to contribution)
+      // 7. Calculate POF token amount (1:1 ratio - $1 USDC = 1 A-token)
       const targetAmount = parseFloat(deal.targetAmount.toString());
-      const totalSupply = parseFloat(deal.totalSupply.toString()) || targetAmount;
-      const tokenAmount = (contributionAmount / totalSupply) * parseFloat(deal.targetAmount.toString());
+      const totalSupply = parseFloat(deal.totalSupply.toString()) || 0;
+      const tokenAmount = contributionAmount; // 1:1 ratio
 
-      // 8. TODO: Mint POF tokens to investor
-      // await aTokenService.mint(deal.atokenAddress, investorAddress, tokenAmount);
+      // 8. Mint A-tokens to investor
+      // A-tokens represent the investor's share of the deal
+      try {
+        if (deal.atokenAddress) {
+          await this.aTokenService.mint({ atokenAddress: deal.atokenAddress, address: investorAddress, amount: tokenAmount.toString() });
+          logger.info({ atokenAddress: deal.atokenAddress, investorAddress, tokenAmount }, 'A-tokens minted to investor');
+        } else {
+          logger.warn({ dealId }, 'No A-token address configured, skipping mint');
+        }
+      } catch (mintError) {
+        logger.error({ error: mintError, dealId, investorAddress }, 'Failed to mint A-tokens');
+        // Continue anyway in demo mode
+      }
 
-      // 9. Update deal running total
+      // 9. Update deal running total and total supply
       const newRunningTotal = parseFloat(deal.runningTotal.toString()) + contributionAmount;
       const newTotalSupply = totalSupply + tokenAmount;
 

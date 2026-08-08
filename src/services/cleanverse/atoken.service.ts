@@ -299,6 +299,71 @@ export class ATokenService {
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
+
+  /**
+   * Burn A-Tokens (redeem)
+   * POST /atoken/redeem
+   * 
+   * Investors burn their A-tokens to claim their USDC payout.
+   */
+  async burn(params: {
+    atokenAddress: string;
+    address: string;
+    amount: string;
+  }): Promise<CleanverseResponse<any>> {
+    logger.info({ 
+      atokenAddress: params.atokenAddress,
+      address: params.address,
+      amount: params.amount 
+    }, 'Burning A-Tokens');
+
+    // Call the redeem endpoint
+    const response = await this.client.post<any>('/atoken/redeem', {
+      atoken_address: params.atokenAddress,
+      address: params.address,
+      amount: params.amount,
+    });
+
+    if (this.isSuccess(response)) {
+      logger.info({ 
+        txHash: response.data?.tx_hash,
+        burnedAmount: response.data?.burned_amount 
+      }, 'A-Tokens burned successfully');
+    }
+
+    return response;
+  }
+
+  /**
+   * Mint A-Tokens to an address
+   * POST /atoken/mint
+   */
+  async mint(params: {
+    atokenAddress: string;
+    address: string;
+    amount: string;
+  }): Promise<CleanverseResponse<any>> {
+    logger.info({ 
+      atokenAddress: params.atokenAddress,
+      address: params.address,
+      amount: params.amount 
+    }, 'Minting A-Tokens');
+
+    const response = await this.client.post<any>('/atoken/mint', {
+      atoken_address: params.atokenAddress,
+      address: params.address,
+      amount: params.amount,
+    });
+
+    if (this.isSuccess(response)) {
+      logger.info({ 
+        txHash: response.data?.tx_hash,
+        mintedAmount: response.data?.minted_amount 
+      }, 'A-Tokens minted successfully');
+    }
+
+    return response;
+  }
 }
 
 // Singleton instance
