@@ -16,10 +16,15 @@ import fundingRoutes from './funding';
 import rampRoutes from './ramp';
 import settlementRoutes from './settlement';
 import circleRoutes from './circle';
+import dashboardRoutes from './dashboard';
+import claimsRoutes from './claims';
+import portfolioRoutes from './portfolio';
+import dealsRoutes from './deals';
 
 router.use('/identity', identityRoutes);
 router.use('/purchase-orders', purchaseOrderRoutes);
-router.use('/deals', dealRoutes);
+router.use('/deals', dealRoutes);           // Original deal routes
+router.use('/deals-discovery', dealsRoutes); // New deals listing/discovery
 router.use('/contributions', contributionRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/webhooks', webhookRoutes);
@@ -27,5 +32,8 @@ router.use('/funding', fundingRoutes);
 router.use('/ramp', rampRoutes);
 router.use('/settlement', settlementRoutes);
 router.use('/circle', circleRoutes);
+router.use('/dashboard', dashboardRoutes);
+router.use('/claims', claimsRoutes);
+router.use('/portfolio', portfolioRoutes);
 
 export default router;

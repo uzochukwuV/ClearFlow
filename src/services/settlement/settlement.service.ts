@@ -450,14 +450,15 @@ export class SettlementService {
     const fullyRepaid = newTotalRepaid >= totalRepayment;
 
     if (fullyRepaid) {
+      // Set status to READY_FOR_DISTRIBUTION so investors can claim
       await prisma.deal.update({
         where: { id: dealId },
-        data: { status: 'DELIVERED' },
+        data: { status: 'READY_FOR_DISTRIBUTION' },
       });
 
-      logger.info({ dealId, totalRepaid: newTotalRepaid }, 'Deal fully repaid');
+      logger.info({ dealId, totalRepaid: newTotalRepaid }, 'Deal fully repaid, ready for distribution');
 
-      // Trigger investor payout distribution
+      // Create investor payout records (investors will claim manually)
       await this.calculateAndDistributePayouts(dealId);
     }
 
