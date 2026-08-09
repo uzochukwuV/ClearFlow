@@ -1,22 +1,19 @@
-import { db } from "@/api/db";
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
+import { useBuyerPOs } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { StatusBadge, EmptyState, PageHeader, money } from '@/components/cf';
-import { FileSignature, Plus } from 'lucide-react';
+import { FileSignature, Plus, Loader2 } from 'lucide-react';
 
 export default function PurchaseOrders() {
   const { address } = useWallet();
-  const [pos, setPos] = useState(null);
+  const { data, isLoading } = useBuyerPOs(address);
+  const pos = data?.data?.items || [];
 
-  useEffect(() => {
-    db.entities.PurchaseOrder.filter({ buyerAddress: address }, '-created_date', 100).then(setPos).catch(() => setPos([]));
-  }, [address]);
-
-  if (!pos) return <div className="py-20 text-center text-slate">Loading…</div>;
+  if (isLoading) return <div className="py-20 text-center text-slate"><Loader2 className="mx-auto h-6 w-6 animate-spin" /></div>;
 
   return (
     <div>
@@ -39,7 +36,7 @@ export default function PurchaseOrders() {
                       <span className="font-heading font-medium">{p.poReference}</span>
                       <StatusBadge status={p.status} />
                     </div>
-                    <div className="truncate text-sm text-slate">{p.description}</div>
+                    <div className="truncate text-sm text-slate">{p.poReference}</div>
                     <div className="mt-1 text-xs text-slate">Supplier: {p.supplierAddress?.slice(0, 10)}… · Qty {p.quantity}</div>
                   </div>
                   <div className="flex items-center gap-4">

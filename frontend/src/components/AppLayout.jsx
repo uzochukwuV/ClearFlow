@@ -1,5 +1,4 @@
-import { db } from "@/api/db";
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
@@ -39,12 +38,7 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { address, shortAddr, role: walletRole, setRole, disconnect } = useWallet();
-  const [user, setUser] = useState(null);
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    db.auth.me().then(setUser).catch(() => setUser(null));
-  }, [location.pathname]);
 
   const role = (walletRole || 'BUYER').toUpperCase();
   const nav = ROLE_NAV[role] || ROLE_NAV.BUYER;
@@ -116,7 +110,7 @@ export default function AppLayout() {
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border bg-card/80 px-4 backdrop-blur-xl md:px-8">
           <button className="md:hidden" onClick={() => setOpen(true)}><Menu className="h-5 w-5" /></button>
           <div className="hidden text-sm text-slate md:block">
-            {user?.full_name ? `Welcome, ${user.full_name}.` : 'Welcome to ClearFlow.'}
+            {address ? `Connected: ${shortAddr(address)}` : 'Welcome to ClearFlow.'}
           </div>
           {/* Role switcher — act as any type at any time */}
           <div className="flex items-center gap-2">

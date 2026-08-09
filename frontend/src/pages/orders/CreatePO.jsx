@@ -1,8 +1,8 @@
-import { db } from "@/api/db";
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
+import { useCreatePurchaseOrder } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,12 +10,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { PageHeader } from '@/components/cf';
-import { logActivity } from '@/lib/activity';
 import { Loader2, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 export default function CreatePO() {
   const navigate = useNavigate();
-  const { address, sign, shortAddr } = useWallet();
+  const { address, signPurchaseOrder, shortAddr } = useWallet();
+  const createPO = useCreatePurchaseOrder();
   const { toast } = useToast();
   const [form, setForm] = useState({ supplierAddress: '', amount: '', quantity: '', description: '', deliveryDate: '' });
   const [saving, setSaving] = useState(false);
@@ -27,27 +27,25 @@ export default function CreatePO() {
       toast({ title: 'Please fill all required fields', variant: 'destructive' });
       return;
     }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(form.supplierAddress)) {
+      toast({ title: 'Invalid supplier address', description: 'Must be a 0x-prefixed 40-char hex address.', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
-      const signature = await sign();
-      const ref = 'PO-' + Date.now().toString().slice(-8);
-      const created = await db.entities.PurchaseOrder.create({
-        poReference: ref,
+      const poReference = 'PO-' + Date.now().toString().slice(-8);
+      const canonicalPO = {
+        poReference,
         buyerAddress: address,
-        buyerName: 'You',
         supplierAddress: form.supplierAddress,
-        supplierName: 'Supplier',
-        amount: Number(form.amount),
+        amount: String(form.amount),
         currency: 'USD',
-        quantity: Number(form.quantity) || 0,
-        description: form.description,
-        deliveryDate: form.deliveryDate,
-        status: 'PENDING_SUPPLIER_SIGNATURE',
-        buyerSignature: signature,
-      });
-      await logActivity({ entityType: 'PURCHASE_ORDER', entityId: created.id, action: 'PO_CREATED', label: `Buyer created ${ref} for ${Number(form.amount)} USD`, actorAddress: address, actorRole: 'BUYER', status: 'PENDING_SUPPLIER_SIGNATURE', meta: { amount: Number(form.amount) } });
-      toast({ title: 'Purchase order created', description: `${ref} — awaiting supplier signature.` });
-      navigate('/app/orders');
+        quantity: Number(form.quantity) || 1,
+        deliveryDate: form.deliveryDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      };
+      const result = await createPO.mutateAsync({ po: canonicalPO, eip712Signer: signPurchaseOrder });
+      toast({ title: 'Purchase order created', description: `${poReference} — awaiting supplier signature.` });
+      navigate(`/app/orders/${result.poId}`);
     } catch (e) {
       toast({ title: 'Could not create PO', description: e.message, variant: 'destructive' });
     } finally {

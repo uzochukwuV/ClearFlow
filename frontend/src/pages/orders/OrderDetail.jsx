@@ -1,56 +1,62 @@
-import { db } from "@/api/db";
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
+import { usePurchaseOrder, useSignPurchaseOrder } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
 import { StatusBadge, PageHeader, money, InfoRow } from '@/components/cf';
 import StatusStepper, { PO_STEPS } from '@/components/StatusStepper';
-import ActivityTimeline from '@/components/ActivityTimeline';
-import { logActivity, fetchActivity } from '@/lib/activity';
 import { Loader2, ArrowLeft, ShieldCheck, CheckCircle2, Coins } from 'lucide-react';
 
 export default function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { address, sign, shortAddr, role: walletRole } = useWallet();
+  const { address, sign, signPurchaseOrder, shortAddr, role: walletRole } = useWallet();
   const { toast } = useToast();
-  const [po, setPo] = useState(null);
-  const [events, setEvents] = useState([]);
+  const { data: resp, isLoading } = usePurchaseOrder(id);
+  const signPO = useSignPurchaseOrder();
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
-    const p = await db.entities.PurchaseOrder.get(id);
-    setPo(p);
-    setEvents(await fetchActivity('PURCHASE_ORDER', id));
-  };
-  useEffect(() => { load(); }, [id]);
+  const po = resp?.data;
 
   const role = (walletRole || 'BUYER').toUpperCase();
   const isSupplier = role === 'SUPPLIER' && po?.supplierAddress === address;
   const isBuyer = role === 'BUYER' && po?.buyerAddress === address;
 
   const handleSign = async () => {
+    if (!po) return;
     setBusy(true);
     try {
-      const signature = await sign();
-      await db.entities.PurchaseOrder.update(id, { supplierSignature: signature, status: 'SIGNED' });
-      await logActivity({ entityType: 'PURCHASE_ORDER', entityId: id, action: 'PO_SIGNED', label: 'Supplier signed the purchase order', actorAddress: address, actorRole: 'SUPPLIER', status: 'SIGNED', meta: { signature } });
+      const canonicalPO = {
+        poReference: po.poReference,
+        buyerAddress: po.buyerAddress,
+        supplierAddress: po.supplierAddress,
+        amount: String(po.amount),
+        currency: po.currency || 'USD',
+        quantity: po.quantity,
+        deliveryDate: po.deliveryDate ? new Date(po.deliveryDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        poHash: po.poHash,
+      };
+      await signPO.mutateAsync({
+        poId: po.id,
+        po: canonicalPO,
+        authSigner: sign,
+        eip712Signer: signPurchaseOrder,
+      });
       toast({ title: 'PO signed', description: `${po.poReference} is now fully signed.` });
-      load();
     } catch (e) {
       toast({ title: 'Signing failed', description: e.message, variant: 'destructive' });
     } finally { setBusy(false); }
   };
 
-  if (!po) return <div className="py-20 text-center text-slate">Loading purchase order…</div>;
+  if (isLoading || !po) return <div className="py-20 text-center text-slate"><Loader2 className="mx-auto h-6 w-6 animate-spin" /></div>;
 
   return (
     <div>
       <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mb-3"><ArrowLeft className="mr-1 h-4 w-4" /> Back</Button>
-      <PageHeader eyebrow="Purchase Order" title={po.poReference} desc={po.description} />
+      <PageHeader eyebrow="Purchase Order" title={po.poReference} desc={po.poReference} />
 
       <Card className="mb-6 card-asymmetric bg-secondary">
         <CardContent className="p-6">
@@ -70,11 +76,10 @@ export default function OrderDetail() {
               <InfoRow label="Amount" value={money(po.amount)} />
               <InfoRow label="Currency" value={po.currency || 'USD'} />
               <InfoRow label="Quantity" value={po.quantity || '—'} />
-              <InfoRow label="Delivery date" value={po.deliveryDate || '—'} />
-              <InfoRow label="Buyer" value={po.buyerName || shortAddr(po.buyerAddress)} />
-              <InfoRow label="Buyer wallet" value={shortAddr(po.buyerAddress)} mono />
-              <InfoRow label="Supplier" value={po.supplierName || 'Supplier'} />
-              <InfoRow label="Supplier wallet" value={shortAddr(po.supplierAddress)} mono />
+              <InfoRow label="Delivery date" value={po.deliveryDate ? new Date(po.deliveryDate).toLocaleDateString() : '—'} />
+              <InfoRow label="Buyer" value={shortAddr(po.buyerAddress)} mono />
+              <InfoRow label="Supplier" value={shortAddr(po.supplierAddress)} mono />
+              {po.poHash && <InfoRow label="PO Hash" value={`${po.poHash.slice(0, 10)}…`} mono />}
             </CardContent>
           </Card>
 
@@ -94,14 +99,6 @@ export default function OrderDetail() {
                   <span className="flex items-center gap-1.5 text-foreground"><CheckCircle2 className="h-4 w-4" /> Signed</span>
                 ) : <span className="text-slate">Pending</span>}
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Activity log */}
-          <Card>
-            <CardHeader><CardTitle className="font-heading text-base font-medium">Activity Log</CardTitle></CardHeader>
-            <CardContent>
-              <ActivityTimeline events={events} />
             </CardContent>
           </Card>
         </div>

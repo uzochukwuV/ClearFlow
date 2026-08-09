@@ -1,15 +1,14 @@
-import { db } from "@/api/db";
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
+import { usePurchaseOrder, useCreateDeal } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
 import { PageHeader, money } from '@/components/cf';
-import { logActivity } from '@/lib/activity';
 import { Loader2, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 const COUNTRIES = ['US', 'CN', 'SG', 'GB', 'DE', 'NG', 'AE', 'JP'];
@@ -20,56 +19,46 @@ export default function CreateDeal() {
   const poId = params.get('poId');
   const { address, sign } = useWallet();
   const { toast } = useToast();
-  const [po, setPo] = useState(null);
-  const [form, setForm] = useState({ targetAmount: '', yield: '8.5', fundingDeadline: '', deliveryDeadline: '', countries: ['US', 'CN', 'SG'] });
+  const { data: poResp, isLoading: poLoading } = usePurchaseOrder(poId);
+  const createDeal = useCreateDeal();
+  const [form, setForm] = useState({ targetAmount: '', yieldPercent: '8.5', fundingDeadline: '', deliveryDeadline: '', countries: ['US', 'CN', 'SG'] });
   const [saving, setSaving] = useState(false);
 
+  const po = poResp?.data;
+
   useEffect(() => {
-    if (!poId) return;
-    db.entities.PurchaseOrder.get(poId).then((p) => {
-      setPo(p);
-      setForm((f) => ({ ...f, targetAmount: String(p.amount) }));
-    }).catch(() => setPo(null));
-  }, [poId]);
+    if (po) {
+      setForm((f) => ({ ...f, targetAmount: String(po.amount) }));
+    }
+  }, [po]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const toggleCountry = (c) => setForm({ ...form, countries: form.countries.includes(c) ? form.countries.filter((x) => x !== c) : [...form.countries, c] });
 
   const handleSubmit = async () => {
     if (!po) return;
-    if (Number(form.targetAmount) > po.amount) {
+    if (Number(form.targetAmount) > Number(po.amount)) {
       toast({ title: 'Target cannot exceed PO amount', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
-      const signature = await sign();
-      const symbol = 'POF-' + Math.random().toString(36).slice(2, 7).toUpperCase();
-      const wallet = '0x' + Math.random().toString(16).slice(2, 42).padEnd(40, '0');
-      const created = await db.entities.Deal.create({
-        poId: po.id,
-        poReference: po.poReference,
-        buyerAddress: address,
-        buyerName: po.buyerName,
-        targetAmount: Number(form.targetAmount),
-        minimumAmount: Math.round(Number(form.targetAmount) * 0.8),
-        yield: Number(form.yield),
-        fundingDeadline: form.fundingDeadline ? new Date(form.fundingDeadline).toISOString() : new Date(Date.now() + 30 * 86400000).toISOString(),
-        deliveryDeadline: form.deliveryDeadline ? new Date(form.deliveryDeadline).toISOString() : new Date(Date.now() + 90 * 86400000).toISOString(),
+      const dealPayload = {
+        purchaseOrderId: po.id,
+        targetAmount: String(form.targetAmount),
+        yieldPercent: Number(form.yieldPercent),
+        fundingDeadline: form.fundingDeadline
+          ? new Date(form.fundingDeadline).toISOString()
+          : new Date(Date.now() + 30 * 86400000).toISOString(),
+        deliveryDeadline: form.deliveryDeadline
+          ? new Date(form.deliveryDeadline).toISOString()
+          : new Date(Date.now() + 90 * 86400000).toISOString(),
         eligibleCountries: form.countries,
-        atokenSymbol: symbol,
-        status: 'OPEN',
-        runningTotal: 0,
-        investorCount: 0,
-        dealWalletAddress: wallet,
-        supplierAddress: po.supplierAddress,
-        supplierName: po.supplierName,
-      });
-      await db.entities.PurchaseOrder.update(po.id, { status: 'DEAL_CREATED' });
-      await logActivity({ entityType: 'DEAL', entityId: created.id, action: 'DEAL_LAUNCHED', label: `Buyer launched funding deal ${symbol} at ${Number(form.yield)}% APR`, actorAddress: address, actorRole: 'BUYER', status: 'OPEN', meta: { target: Number(form.targetAmount), yield: Number(form.yield) } });
-      await logActivity({ entityType: 'PURCHASE_ORDER', entityId: po.id, action: 'DEAL_LAUNCHED', label: `Funding deal ${symbol} launched from this PO`, actorAddress: address, actorRole: 'BUYER', status: 'DEAL_CREATED' });
-      toast({ title: 'Deal launched', description: `${symbol} is now open for funding.` });
-      navigate('/app/deals');
+      };
+      const result = await createDeal.mutateAsync({ deal: dealPayload, signer: sign });
+      const dealId = result?.dealId || result?.data?.dealId || result?.id;
+      toast({ title: 'Deal launched', description: 'Funding deal is now open for contributions.' });
+      navigate(dealId ? `/app/deals/${dealId}` : '/app/deals');
     } catch (e) {
       toast({ title: 'Could not create deal', description: e.message, variant: 'destructive' });
     } finally {
@@ -77,7 +66,7 @@ export default function CreateDeal() {
     }
   };
 
-  if (!po) return <div className="py-20 text-center text-slate">Loading purchase order…</div>;
+  if (poLoading || !po) return <div className="py-20 text-center text-slate"><Loader2 className="mx-auto h-6 w-6 animate-spin" /></div>;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -94,7 +83,7 @@ export default function CreateDeal() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Yield (%) *</Label>
-              <Input type="number" step="0.1" value={form.yield} onChange={set('yield')} />
+              <Input type="number" step="0.1" value={form.yieldPercent} onChange={set('yieldPercent')} />
             </div>
             <div className="space-y-2">
               <Label>Funding Deadline</Label>
@@ -121,7 +110,7 @@ export default function CreateDeal() {
             </div>
           </div>
           <div className="rounded-md border border-border bg-secondary p-3 text-sm">
-            <div className="flex items-center gap-2 text-slate"><ShieldCheck className="h-4 w-4" /> You'll sign EIP-712 and an A-Token will be auto-generated.</div>
+            <div className="flex items-center gap-2 text-slate"><ShieldCheck className="h-4 w-4" /> You'll sign with your wallet and an A-Token will be auto-generated.</div>
           </div>
           <Button className="w-full" size="lg" onClick={handleSubmit} disabled={saving}>
             {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Launching…</> : 'Sign & Launch Deal'}
