@@ -34,7 +34,7 @@ export function generateAuthMessage(
 export const onboardRequestSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-191 signature'),
   message: z.string().min(1, 'Message is required'),
-  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana', 'monad']).default('monad'),
   userType: z.enum(['BUYER', 'SUPPLIER', 'INVESTOR', 'PLATFORM']),
   customerId: z.string().min(12).regex(/^[A-Za-z0-9]+$/, 'customerId must be alphanumeric, 12+ chars'),
   identityDataList: z.array(z.object({
@@ -65,7 +65,7 @@ export const contributeRequestSchema = z.object({
 export const verifyRequestSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-191 signature'),
   message: z.string().min(1, 'Message is required'),
-  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana', 'monad']).default('monad'),
 });
 
 // Status check request
@@ -73,7 +73,7 @@ export const statusRequestSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-191 signature'),
   message: z.string().min(1, 'Message is required'),
   walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address'),
-  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana', 'monad']).default('monad'),
 });
 
 // Eligibility check request
@@ -89,7 +89,7 @@ export const freezeRequestSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-191 signature'),
   message: z.string().min(1, 'Message is required'),
   targetWallet: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid target wallet address'),
-  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana', 'monad']).default('monad'),
   reason: z.string().min(1, 'Reason is required'),
 });
 
@@ -98,7 +98,7 @@ export const unfreezeRequestSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-191 signature'),
   message: z.string().min(1, 'Message is required'),
   targetWallet: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid target wallet address'),
-  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana']).default('polygon'),
+  chain: z.enum(['polygon', 'ethereum', 'base', 'arbitrum', 'bsc', 'solana', 'monad']).default('monad'),
 });
 
 // Payout Release Request - requires both admin and supplier signatures
