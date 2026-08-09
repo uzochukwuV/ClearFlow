@@ -592,6 +592,34 @@ export class SettlementService {
 
     // DO NOT auto-distribute - investors must claim manually
     // Just mark the deal as READY_FOR_DISTRIBUTION
+
+    // Sweep the 3% platform admin fee to the admin Circle wallet.
+    // The fee was subtracted from investor yield above; move those funds out of
+    // the deal wallet to the platform admin wallet now. Best-effort: if the
+    // sweep fails we log + continue (investors can still claim their share;
+    // the fee remains in the deal wallet for a manual sweep later).
+    if (adminFee > 0 && deal.circleWalletId) {
+      try {
+        const sweep = await this.circleWalletService.sweepToAdminWallet({
+          dealWalletId: deal.circleWalletId,
+          amount: adminFee.toFixed(6),
+          dealId,
+        });
+        if (sweep.success) {
+          logger.info({ dealId, adminFee, transferId: sweep.transferId }, 'Platform fee swept to admin wallet');
+          await this.logSettlementEvent({
+            dealId,
+            eventType: SettlementEventType.PAYOUT_CALCULATED,
+            data: { adminFeeSweepTransferId: sweep.transferId, adminFee },
+          });
+        } else {
+          logger.warn({ dealId, adminFee, error: sweep.error }, 'Platform fee sweep failed — fee remains in deal wallet');
+        }
+      } catch (err) {
+        logger.error({ dealId, adminFee, error: err }, 'Platform fee sweep threw — fee remains in deal wallet');
+      }
+    }
+
     logger.info({ dealId, investorCount: payouts.length }, 'Payouts calculated, investors can now claim');
 
     return { success: true, payouts };

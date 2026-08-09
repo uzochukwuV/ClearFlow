@@ -13,6 +13,7 @@ export interface CircleResponse<T = any> {
 // ============ Wallet Types ============
 
 export type CircleBlockchain = 
+  | 'MONAD'
   | 'ETH'
   | 'MATIC'      // Polygon
   | 'SOL'

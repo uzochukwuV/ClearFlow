@@ -1,11 +1,9 @@
 import { prisma } from '../../config/database';
 import { getCircleWalletService } from '../circle';
-import { getATokenService } from '../cleanverse';
 import { logger } from '../../config';
-import { Prisma } from '@prisma/client';
+import { Prisma, ContributionStatus, ContributionType } from '@prisma/client';
 import {
   FundingState,
-  ContributionStatus,
   FundingEventType,
   CircleWebhookEvent,
   TransferWebhookData,
@@ -28,7 +26,6 @@ import {
  */
 export class FundingService {
   private circleWalletService = getCircleWalletService();
-  private aTokenService = getATokenService();
 
   /**
    * Get current funding state for a deal
@@ -176,17 +173,19 @@ export class FundingService {
         ? await prisma.user.findFirst({ where: { walletAddress: sourceAddress.toLowerCase() } })
         : null;
 
-      // Create contribution record
+      // Create contribution record (CONFIRMED — the transfer already settled).
       const contribution = await prisma.contribution.create({
         data: {
           dealId: deal.id,
           investorId: investor?.id || 'unknown',
           amount: amount,  // Store as string
           currency,
-          type: 'CRYPTO',
-          status: 'CONFIRMED',
+          type: ContributionType.CRYPTO,
+          status: ContributionStatus.CONFIRMED,
           fromAddress: sourceAddress,
+          toAddress: dealWalletAddress,
           txHash,
+          confirmedAt: new Date(),
         },
       });
 
@@ -208,6 +207,15 @@ export class FundingService {
           investorAddress: sourceAddress,
         },
       });
+
+      // Mint POF A-Tokens for the verified deposit. Lazy import avoids the
+      // deal <-> funding circular module dependency at load time.
+      try {
+        const { getDealService } = await import('../deal');
+        await getDealService().mintTokensForContribution(contribution.id);
+      } catch (mintError) {
+        logger.error({ error: mintError, contributionId: contribution.id }, 'Failed to mint tokens for attributed transfer');
+      }
 
       // Check if deal is now fully funded
       if (updatedDeal.runningTotal.toNumber() >= updatedDeal.targetAmount.toNumber()) {

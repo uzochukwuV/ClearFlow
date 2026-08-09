@@ -103,32 +103,53 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
     });
   }
 
-  // Verify ADMIN signature and recover admin address
-  const adminAuthResult = authService.verifySignature(
-    validated.adminSignature,
-    validated.adminMessage
-  );
-  
-  if (!adminAuthResult.valid || !adminAuthResult.walletAddress) {
-    return res.status(401).json({
-      success: false,
-      error: { message: 'Invalid admin signature', details: adminAuthResult.error },
-    });
+  // Verify ADMIN signature and recover admin address.
+  // If adminSignature is present → verify it is the configured admin wallet.
+  // If absent → the backend signs server-side with the Circle admin wallet
+  //   (the admin key is held by Circle and cannot sign with MetaMask).
+  let adminAddress: string;
+  if (validated.adminSignature && validated.adminMessage) {
+    const adminAuthResult = await authService.verifyAdminSignature(
+      validated.adminSignature,
+      validated.adminMessage
+    );
+    if (!adminAuthResult.valid || !adminAuthResult.isAdmin || !adminAuthResult.walletAddress) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid admin signature', details: adminAuthResult.error },
+      });
+    }
+    adminAddress = adminAuthResult.walletAddress;
+  } else {
+    const adminSign = await authService.signAsAdmin(
+      authService.generateContributeMessage(validated.dealId, validated.amount)
+    );
+    if (!adminSign.success || !adminSign.signature || !adminSign.adminAddress) {
+      return res.status(500).json({
+        success: false,
+        error: { message: 'Admin signing failed', details: adminSign.error },
+      });
+    }
+    adminAddress = adminSign.adminAddress;
   }
 
-  logger.info({ 
+  logger.info({
     investorAddress: investorAuthResult.walletAddress,
-    adminAddress: adminAuthResult.walletAddress,
+    adminAddress,
     dealId,
-    amount: validated.amount 
+    amount: validated.amount
   }, 'Processing contribution with dual signatures');
 
   const result = await dealService.contribute({
     investorAddress: investorAuthResult.walletAddress,
-    adminAddress: adminAuthResult.walletAddress,
+    adminAddress,
     dealId: validated.dealId,
     amount: validated.amount,
     chain: 'monad',
+    paymentMethod: validated.paymentMethod,
+    fiatCurrency: validated.fiatCurrency,
+    partnerCustomerId: validated.partnerCustomerId,
+    mintTokensOnConfirm: validated.mintTokensOnConfirm,
   });
 
   if (!result.success) {
@@ -142,10 +163,14 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
     success: true,
     data: {
       contributionId: result.contributionId,
+      contributionStatus: result.contributionStatus,
       tokenAmount: result.tokenAmount,
-      rampReceiptId: result.rampReceiptId,
+      dealWalletAddress: result.dealWalletAddress,
+      txHash: result.txHash,
+      rampOrderId: result.rampOrderId,
+      rampQuoteToken: result.rampQuoteToken,
+      rampWidgetUrl: result.rampWidgetUrl,
       rampTxHash: result.rampTxHash,
-      status: 'CONFIRMED',
     },
   });
 }));

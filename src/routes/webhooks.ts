@@ -92,6 +92,10 @@ router.post('/cleanverse', async (req: Request, res: Response) => {
       case 'apass.revoked':
         await handleAPassRevoked(data);
         break;
+      case 'ramp.order.completed':
+      case 'ramp.order.failed':
+        await handleRampOrderEvent(type, data);
+        break;
       default:
         logger.info({ type }, 'Unhandled Cleanverse webhook type');
     }
@@ -164,6 +168,61 @@ async function handleAPassRevoked(data: any) {
       apassStatus: 'FROZEN',
     },
   });
+}
+
+/**
+ * Handle Cleanverse ramp order events (completed / failed).
+ *
+ * On completion we enqueue a verification+mint job so the contribution's
+ * USDC landing in the deal wallet is confirmed before tokens are minted.
+ * On failure we mark the contribution FAILED.
+ */
+async function handleRampOrderEvent(type: string, data: any) {
+  const { orderId, quoteToken, txHash, status } = data || {};
+
+  logger.info({ type, orderId, quoteToken, status, txHash }, 'Ramp order event');
+
+  const { prisma } = await import('../config/database');
+
+  // Locate the contribution by rampOrderId or rampQuoteToken.
+  const contribution = await prisma.contribution.findFirst({
+    where: {
+      OR: [
+        { rampOrderId: orderId },
+        { rampQuoteToken: quoteToken },
+      ],
+    },
+  });
+  if (!contribution) {
+    logger.warn({ orderId, quoteToken }, 'Ramp event: no matching contribution');
+    return;
+  }
+
+  if (type === 'ramp.order.failed') {
+    await prisma.contribution.update({
+      where: { id: contribution.id },
+      data: { status: 'FAILED' },
+    });
+    logger.warn({ contributionId: contribution.id, orderId }, 'Ramp order failed — contribution FAILED');
+    return;
+  }
+
+  // ramp.order.completed — store the ramp tx hash and enqueue verification.
+  await prisma.contribution.update({
+    where: { id: contribution.id },
+    data: {
+      rampTxHash: txHash,
+      rampOrderId: orderId || contribution.rampOrderId,
+    },
+  });
+
+  try {
+    const { addJob } = await import('../jobs/queue');
+    await addJob('poll-ramp-order', { contributionId: contribution.id }, { attempts: 30 });
+    logger.info({ contributionId: contribution.id, orderId }, 'Enqueued ramp-order verification job');
+  } catch (jobError) {
+    logger.error({ error: jobError, contributionId: contribution.id }, 'Could not enqueue ramp verification job');
+  }
 }
 
 export default router;

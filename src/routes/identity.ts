@@ -235,7 +235,7 @@ router.post('/freeze', asyncHandler(async (req: Request, res: Response) => {
   const validated = freezeRequestSchema.parse(req.body);
   
   // Verify admin signature
-  const authResult = authService.verifyAdminSignature(validated.signature, validated.message);
+  const authResult = await authService.verifyAdminSignature(validated.signature, validated.message);
   
   if (!authResult.valid || !authResult.isAdmin) {
     return res.status(403).json({
@@ -291,7 +291,7 @@ router.post('/unfreeze', asyncHandler(async (req: Request, res: Response) => {
   const validated = unfreezeRequestSchema.parse(req.body);
   
   // Verify admin signature
-  const authResult = authService.verifyAdminSignature(validated.signature, validated.message);
+  const authResult = await authService.verifyAdminSignature(validated.signature, validated.message);
   
   if (!authResult.valid || !authResult.isAdmin) {
     return res.status(403).json({

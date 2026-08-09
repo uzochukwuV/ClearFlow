@@ -25,7 +25,20 @@ const envSchema = z.object({
   CIRCLE_BASE_URL: z.string().url().default('https://api.circle.com'),
   CIRCLE_WALLET_SET_ID: z.string(),
   CIRCLE_ENTITY_SECRET: z.string(),
-  CIRCLE_WEBHOOK_SECRET: z.string(),
+  CIRCLE_WEBHOOK_SECRET: z.string().optional(),
+  // Platform admin wallet — a Circle developer-controlled wallet (key held by
+  // Circle, controlled via the entity secret) in the wallet set. The backend
+  // signs admin approvals server-side via circleClient.signMessage and sweeps
+  // the 3% platform fee here. Created by scripts/setup-admin-wallet.ts.
+  CIRCLE_ADMIN_WALLET_ID: z.string().optional(),
+
+  // Monad testnet (on-chain deposit verification for Circle deal wallets)
+  MONAD_RPC_URL: z.string().url().default('https://rpc.ankr.com/monad_testnet'),
+  MONAD_USDC_ADDRESS: z.string().default('0x534b2f3A21130d7a60830c2Df862319e593943A3'),
+
+  // Feature flags
+  SKIP_CIRCLE_WALLET: z.string().default('false'),
+  SKIP_APASS_VERIFICATION: z.string().default('false'),
 
   // JWT
   JWT_SECRET: z.string(),

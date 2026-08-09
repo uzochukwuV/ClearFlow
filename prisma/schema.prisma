@@ -174,9 +174,9 @@ model Contribution {
   dealId          String
   investorId      String
   amount          String             // Store as string to preserve exact format
-  currency       String             @default("USDC")
-  type            String  @default("CRYPTO")
-  status          String  @default("PENDING")
+  currency        String             @default("USDC")
+  type            ContributionType   @default(CRYPTO)
+  status          ContributionStatus @default(PENDING)
 
   txHash          String?
   fromAddress     String?
@@ -185,12 +185,12 @@ model Contribution {
   // Ramp/onramp payment verification
   rampOrderId     String?
   rampQuoteToken  String?
-  rampReceiptId   String?            // Receipt ID from Clearverse ramp
-  rampTxHash      String?            // Transaction hash from Clearverse ramp
+  rampReceiptId   String?            // Receipt ID from Cleanverse ramp
+  rampTxHash      String?            // Transaction hash from Cleanverse ramp
 
   confirmedAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   deal            Deal      @relation(fields: [dealId], references: [id])
   investor        User      @relation(fields: [investorId], references: [id])
@@ -199,6 +199,7 @@ model Contribution {
   @@index([investorId])
   @@index([txHash])
   @@index([rampOrderId])
+  @@index([status])
 }
 
 model Delivery {

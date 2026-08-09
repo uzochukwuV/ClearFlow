@@ -104,9 +104,11 @@ export const unfreezeRequestSchema = z.object({
 // Payout Release Request - requires both admin and supplier signatures
 // Admin approves payout release, Supplier signs off on PO for payment
 export const payoutReleaseRequestSchema = z.object({
-  // Admin signature - platform approves payout
-  adminSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid admin signature'),
-  adminMessage: z.string().min(1, 'Admin message is required'),
+  // Admin signature - platform approves payout.
+  // OPTIONAL: when omitted, the backend signs server-side with the Circle
+  // developer-controlled admin wallet. When present, verified to be the admin.
+  adminSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid admin signature').optional(),
+  adminMessage: z.string().min(1, 'Admin message is required').optional(),
 
   // Supplier signature - supplier signs PO for payment release
   supplierSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid supplier signature'),
