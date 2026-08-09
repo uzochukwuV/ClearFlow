@@ -74,6 +74,7 @@ model User {
   apassCountries  String[]
   apassExpiration DateTime?
   apassTxHash     String?
+  apassAddress    String?
   customerId      String?
   email           String?
   createdAt       DateTime     @default(now())
