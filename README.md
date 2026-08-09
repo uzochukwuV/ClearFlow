@@ -1,4 +1,4 @@
-﻿# ClearFlow
+# ClearFlow
 
 ClearFlow is a verified purchase-order financing platform for compliant trade finance.
 
@@ -23,6 +23,26 @@ From there, ClearFlow:
 7. Mints financing positions only after funds are verified.
 8. Handles repayment, settlement, and claim/disbursement tracking through the same compliance rails.
 
+## Integrations used in the build
+
+| Integration | Used for |
+|---|---|
+| `generate_apass` | Create A-Pass identities for buyer, supplier, and investor onboarding |
+| `query_apass` | Detect existing A-Pass records, read tier/country/status, and skip onboarding when already active |
+| `verify_apass` | Gate PO actions, deal participation, and investor eligibility |
+| `update_status` | Freeze or unfreeze identities for compliance/default handling |
+| `query_ramp_quote` | Price the fiat ramp before launching the widget |
+| `create_ramp_widget_url` | Open Cleanverse fiat ramp for buyer payment and investor contribution |
+| `query_ramp_order` | Track fiat payment completion for buyer payment, investor contribution, and claim/payout-related flows |
+| `launch` / `register` A-Token | Create the per-deal compliance token |
+| `add_rule` / `set_rule` / `query_rules` | Enforce tier and country restrictions on token holders |
+| `query_txs` / `query_institution_txs` | Audit wallet transfers and deposit/withdraw history |
+| `download_travel_rule` | Export compliance audit records |
+| Circle wallet sets / `createWallets` | Create one deal wallet per financing round |
+| `getWallet` / `getWalletTokenBalance` | Read wallet metadata and balances |
+| `createTransaction` | Send USDC from deal wallet to supplier or investors |
+| `listTransactions` | Verify deposits landed in the deal wallet |
+| `signMessage` | Sign admin approvals server-side with the Circle admin wallet |
 ## CVI/CVA integration points
 
 ClearFlow uses Cleanverse where trust and eligibility matter, and Circle where settlement matters.
