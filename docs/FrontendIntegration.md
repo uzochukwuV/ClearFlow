@@ -242,8 +242,6 @@ POST /api/v1/deals/:dealId/contribute
 {
   "investorSignature": "0x...",
   "investorMessage": "...",
-  "adminSignature": "0x...",
-  "adminMessage": "...",
   "amount": "50000",
   "paymentMethod": "CRYPTO",
   "mintTokensOnConfirm": false
@@ -255,8 +253,6 @@ POST /api/v1/deals/:dealId/contribute
 {
   "investorSignature": "0x...",
   "investorMessage": "...",
-  "adminSignature": "0x...",
-  "adminMessage": "...",
   "amount": "50000",
   "paymentMethod": "FIAT",
   "fiatCurrency": "USD",
@@ -268,7 +264,7 @@ POST /api/v1/deals/:dealId/contribute
 | Field | Required | Description |
 |-------|----------|-------------|
 | `investorSignature` / `investorMessage` | Yes | Investor EIP-712 signature proving wallet ownership |
-| `adminSignature` / `adminMessage` | Yes | Admin EIP-712 signature approving the contribution |
+| `adminSignature` / `adminMessage` | No | Admin EIP-191 signature approving the contribution. **Optional.** When omitted, the backend signs server-side with the Circle developer-controlled admin wallet (the admin key is held by Circle and cannot sign with MetaMask). When present, it is verified to be the configured admin wallet address. |
 | `amount` | Yes | USDC amount (string, e.g. `"50000"`) |
 | `paymentMethod` | No | `"CRYPTO"` (default) or `"FIAT"` |
 | `fiatCurrency` | FIAT only | Fiat currency code, e.g. `"USD"` |
@@ -322,7 +318,7 @@ and an `error` — the contribution remains pending and the background job will 
 
 **Frontend Flow (CRYPTO):**
 1. Investor enters contribution amount
-2. Investor + admin sign EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "CRYPTO"`
+2. Investor signs EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "CRYPTO"` (admin signature optional — backend signs server-side with the Circle admin wallet)
 3. Backend returns `contributionStatus: "PENDING"` + `dealWalletAddress`
 4. Frontend shows: "Send exactly **50,000 USDC** to `0x109ff9…` on Monad testnet"
 5. Investor sends USDC from their wallet (MetaMask) to the deal wallet
@@ -331,7 +327,7 @@ and an `error` — the contribution remains pending and the background job will 
 
 **Frontend Flow (FIAT):**
 1. Investor enters contribution amount + fiat currency
-2. Investor + admin sign EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "FIAT"`
+2. Investor signs EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "FIAT"` (admin signature optional — backend signs server-side with the Circle admin wallet)
 3. Backend returns `contributionStatus: "PENDING"` + `rampWidgetUrl`
 4. Frontend opens the Cleanverse ramp widget (redirect or iframe)
 5. Investor completes fiat payment in the widget
@@ -535,23 +531,25 @@ POST /api/v1/settlement/deals/:dealId/payout-release
 **Request:**
 ```json
 {
-  "adminAddress": "0x...",
-  "supplierAddress": "0x...",
   "amount": 150000,
   "poId": "uuid",
-  "adminSignature": "0x...",
-  "supplierSignature": "0x..."
+  "supplierSignature": "0x...",
+  "supplierMessage": "..."
 }
 ```
+
+> `adminSignature` / `adminMessage` are **optional**. When omitted, the backend
+> signs server-side with the Circle developer-controlled admin wallet (the admin
+> key is held by Circle and cannot sign with MetaMask). When present, the
+> signature is verified to be the configured admin wallet address.
 
 **Frontend Flow (Admin Dashboard):**
 1. Admin sees "Funded Deals" waiting for payout
 2. Admin clicks "Release Payout"
-3. System generates dual-signature request
-4. Admin signs with wallet
-5. Supplier signs (or receives email/SMS to sign)
-6. Both signatures submitted
-7. Transfer executed from deal wallet to supplier
+3. Supplier signs (or receives email/SMS to sign)
+4. Supplier signature submitted (admin signature optional → backend signs)
+5. Transfer executed from deal wallet to supplier
+6. On settlement, the 3% platform fee is swept to the admin Circle wallet
 
 **Display:**
 ```

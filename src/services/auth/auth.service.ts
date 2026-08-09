@@ -12,6 +12,14 @@ export interface AdminAuthResult extends AuthResult {
   isAdmin: boolean;
 }
 
+export interface AdminSignatureResult {
+  success: boolean;
+  signature?: string;
+  message?: string;
+  adminAddress?: string;
+  error?: string;
+}
+
 /**
  * Authentication Service
  * 
@@ -81,34 +89,89 @@ export class AuthService {
   }
 
   /**
-   * Verify admin signature
-   * Checks if the signer is the configured admin wallet
+   * Resolve the platform admin wallet address.
+   *
+   * The admin wallet is a Circle developer-controlled wallet (key held by
+   * Circle, controlled via the entity secret). Its on-chain address is
+   * resolved from CIRCLE_ADMIN_WALLET_ID via the Circle SDK and cached.
+   * Falls back to CLEANVERSE_ADMIN_WALLET (legacy address-only config).
    */
-  verifyAdminSignature(signature: string, message: string): AdminAuthResult {
+  async getAdminWalletAddress(): Promise<string> {
+    const adminWalletId = config.CIRCLE_ADMIN_WALLET_ID;
+    if (adminWalletId) {
+      const { getCircleWalletService } = await import('../circle/wallet.service');
+      const admin = await getCircleWalletService().getAdminWallet();
+      return admin.address;
+    }
+    const fallback = config.CLEANVERSE_ADMIN_WALLET;
+    if (!fallback) {
+      throw new Error('No admin wallet configured: set CIRCLE_ADMIN_WALLET_ID');
+    }
+    return fallback;
+  }
+
+  /**
+   * Verify admin signature — async (admin address resolved from Circle).
+   * Checks if the signer is the configured admin wallet.
+   */
+  async verifyAdminSignature(signature: string, message: string): Promise<AdminAuthResult> {
     const result = this.verifySignature(signature, message);
-    
+
     if (!result.valid) {
       return { ...result, isAdmin: false };
     }
 
-    const adminWallet = config.CLEANVERSE_ADMIN_WALLET?.toLowerCase();
+    let adminWallet: string;
+    try {
+      adminWallet = (await this.getAdminWalletAddress()).toLowerCase();
+    } catch (err) {
+      logger.error({ error: err }, 'Could not resolve admin wallet address');
+      return { ...result, isAdmin: false, error: 'Admin wallet not configured' };
+    }
     const signer = result.walletAddress?.toLowerCase();
 
     if (!adminWallet || signer !== adminWallet) {
-      logger.warn({ 
-        signer, 
-        adminWallet 
-      }, 'Non-admin wallet attempted admin action');
-      
-      return { 
-        ...result, 
+      logger.warn({ signer, adminWallet }, 'Non-admin wallet attempted admin action');
+      return {
+        ...result,
         isAdmin: false,
-        error: 'Not authorized - admin wallet required' 
+        error: 'Not authorized - admin wallet required'
       };
     }
 
     logger.info({ walletAddress: result.walletAddress }, 'Admin action authorized');
     return { ...result, isAdmin: true };
+  }
+
+  /**
+   * Sign a message as the platform admin, server-side, using the Circle
+   * developer-controlled admin wallet (key held by Circle). This is the
+   * counterpart to verifyAdminSignature: when the admin is a Circle wallet
+   * it cannot sign with MetaMask, so the backend signs internally.
+   *
+   * Requires CIRCLE_ADMIN_WALLET_ID to be configured.
+   */
+  async signAsAdmin(message: string): Promise<AdminSignatureResult> {
+    const adminWalletId = config.CIRCLE_ADMIN_WALLET_ID;
+    if (!adminWalletId) {
+      return { success: false, error: 'CIRCLE_ADMIN_WALLET_ID not configured — cannot sign as admin' };
+    }
+    const { getCircleWalletService } = await import('../circle/wallet.service');
+    const circleWalletService = getCircleWalletService();
+    const admin = await circleWalletService.getAdminWallet();
+    const signResult = await circleWalletService.signMessageWithWallet({
+      walletId: admin.walletId!,
+      message,
+    });
+    if (!signResult.success || !signResult.signature) {
+      return { success: false, error: signResult.error || 'signMessage failed' };
+    }
+    return {
+      success: true,
+      signature: signResult.signature,
+      message,
+      adminAddress: admin.address,
+    };
   }
 
   /**

@@ -112,17 +112,32 @@ router.post('/deals/:dealId/payout-release', async (req: Request, res: Response)
     
     const authService = getAuthService();
 
-    // 1. Verify ADMIN signature and recover admin address
-    const adminAuthResult = authService.verifySignature(
-      validated.adminSignature,
-      validated.adminMessage
-    );
-    
-    if (!adminAuthResult.valid || !adminAuthResult.walletAddress) {
-      return res.status(401).json({
-        success: false,
-        error: { message: 'Invalid admin signature', details: adminAuthResult.error },
-      });
+    // 1. ADMIN approval: verify if adminSignature present, else sign server-side
+    //    with the Circle admin wallet (key held by Circle, can't sign with MetaMask).
+    let adminAddress: string;
+    if (validated.adminSignature && validated.adminMessage) {
+      const adminAuthResult = await authService.verifyAdminSignature(
+        validated.adminSignature,
+        validated.adminMessage
+      );
+      if (!adminAuthResult.valid || !adminAuthResult.isAdmin || !adminAuthResult.walletAddress) {
+        return res.status(401).json({
+          success: false,
+          error: { message: 'Invalid admin signature', details: adminAuthResult.error },
+        });
+      }
+      adminAddress = adminAuthResult.walletAddress;
+    } else {
+      const adminSign = await authService.signAsAdmin(
+        authService.generateContributeMessage(validated.dealId, validated.amount)
+      );
+      if (!adminSign.success || !adminSign.signature || !adminSign.adminAddress) {
+        return res.status(500).json({
+          success: false,
+          error: { message: 'Admin signing failed', details: adminSign.error },
+        });
+      }
+      adminAddress = adminSign.adminAddress;
     }
 
     // 2. Verify SUPPLIER signature and recover supplier address
@@ -138,8 +153,8 @@ router.post('/deals/:dealId/payout-release', async (req: Request, res: Response)
       });
     }
 
-    logger.info({ 
-      adminAddress: adminAuthResult.walletAddress,
+    logger.info({
+      adminAddress,
       supplierAddress: supplierAuthResult.walletAddress,
       dealId,
       amount: validated.amount,
@@ -197,14 +212,14 @@ router.post('/deals/:dealId/payout-release', async (req: Request, res: Response)
 
     const result = await settlementService.initiateSettlement({
       dealId,
-      operatorAddress: adminAuthResult.walletAddress,
+      operatorAddress: adminAddress,
     });
 
     if (result.success) {
       logger.info({ 
         dealId, 
         transferId: result.transferId,
-        adminAddress: adminAuthResult.walletAddress,
+        adminAddress: adminAddress,
         supplierAddress: supplierAuthResult.walletAddress
       }, 'Payout release successful');
       
@@ -214,7 +229,7 @@ router.post('/deals/:dealId/payout-release', async (req: Request, res: Response)
           dealId,
           transferId: result.transferId,
           supplierAddress: supplierAuthResult.walletAddress,
-          adminAddress: adminAuthResult.walletAddress,
+          adminAddress: adminAddress,
           amount: validated.amount,
           poId: validated.poId,
           status: 'SUPPLIER_PAID',

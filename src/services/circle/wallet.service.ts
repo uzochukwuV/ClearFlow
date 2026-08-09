@@ -399,6 +399,98 @@ export class CircleWalletService {
       return { success: false, error: message };
     }
   }
+
+  // ─── Platform admin wallet (Circle developer-controlled) ───────────────
+  //
+  // The admin wallet is a Circle developer-controlled wallet in the wallet set,
+  // NOT an external EOA with a private key. Circle holds the key; the backend
+  // controls it via the entity secret. This lets the backend:
+  //   • sign EIP-191 admin-approval messages server-side (signMessageWithWallet)
+  //   • receive the 3% platform fee (sweepToAdminWallet)
+  // The wallet ID is configured via CIRCLE_ADMIN_WALLET_ID (set up once by
+  // scripts/setup-admin-wallet.ts). Its on-chain address is resolved + cached.
+
+  private adminWalletCache: { walletId: string; address: string } | null = null;
+
+  /**
+   * Resolve the platform admin Circle wallet { walletId, address }.
+   * Falls back to CLEANVERSE_ADMIN_WALLET (address-only) if CIRCLE_ADMIN_WALLET_ID
+   * is not configured, so sign-in operations still work in legacy/demo setups.
+   */
+  async getAdminWallet(): Promise<{ walletId?: string; address: string }> {
+    const adminWalletId = process.env.CIRCLE_ADMIN_WALLET_ID;
+
+    if (adminWalletId) {
+      if (this.adminWalletCache?.walletId === adminWalletId) {
+        return this.adminWalletCache;
+      }
+      const res = await this.client.getWallet({ id: adminWalletId });
+      const wallet = (res as any).data?.wallet;
+      if (!wallet?.address) {
+        throw new Error(`Admin wallet ${adminWalletId} not found or has no address`);
+      }
+      this.adminWalletCache = { walletId: adminWalletId, address: wallet.address };
+      logger.debug({ adminWalletId, address: wallet.address }, 'Resolved admin Circle wallet');
+      return this.adminWalletCache;
+    }
+
+    // Legacy fallback: address only, no Circle wallet ID (no server-side signing).
+    const fallback = process.env.CLEANVERSE_ADMIN_WALLET;
+    if (!fallback) {
+      throw new Error('No admin wallet configured: set CIRCLE_ADMIN_WALLET_ID (or CLEANVERSE_ADMIN_WALLET)');
+    }
+    return { address: fallback };
+  }
+
+  /**
+   * Sign an EIP-191 message with a Circle developer-controlled wallet.
+   * Used for server-side admin approval signatures (the admin wallet's key is
+   * held by Circle, so it cannot sign with MetaMask — the backend signs).
+   */
+  async signMessageWithWallet(params: { walletId: string; message: string }): Promise<{
+    success: boolean;
+    signature?: string;
+    error?: string;
+  }> {
+    try {
+      const res = await this.client.signMessage({
+        walletId: params.walletId,
+        message: params.message,
+      } as any);
+      const signature = (res as any).data?.signature;
+      if (!signature) {
+        return { success: false, error: 'signMessage returned no signature' };
+      }
+      return { success: true, signature };
+    } catch (error: any) {
+      const message = error?.response?.data?.message || error?.message || 'Unknown error';
+      logger.error({ walletId: params.walletId, error: message, raw: error?.response?.data }, 'Circle signMessage failed');
+      return { success: false, error: message };
+    }
+  }
+
+  /**
+   * Transfer USDC from a deal wallet to the platform admin wallet.
+   * Used to sweep the 3% platform fee when a deal is settled.
+   */
+  async sweepToAdminWallet(params: {
+    dealWalletId: string;
+    amount: string;
+    dealId: string;
+  }): Promise<{ success: boolean; transferId?: string; error?: string }> {
+    const admin = await this.getAdminWallet();
+    if (!admin.walletId) {
+      // No Circle admin wallet configured — cannot sweep. Caller should log + skip.
+      return { success: false, error: 'No CIRCLE_ADMIN_WALLET_ID configured for fee sweep' };
+    }
+    const result = await this.transferFromDealWallet({
+      dealWalletId: params.dealWalletId,
+      destinationAddress: admin.address,
+      amount: params.amount,
+      dealId: params.dealId,
+    });
+    return { success: result.success, transferId: result.transferId, error: result.error };
+  }
 }
 
 export function getCircleWalletService(): CircleWalletService {

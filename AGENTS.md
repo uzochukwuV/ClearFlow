@@ -19,9 +19,34 @@ Two external integrations: **Cleanverse** (KYC/A-Pass, A-Token, fiat ramp) and *
 - RPC: `https://rpc.ankr.com/monad_testnet` (also `https://monad-testnet.drpc.org`). chainId 10143.
 - USDC contract (Circle-issued, 6 decimals): `0x534b2f3A21130d7a60830c2Df862319e593943A3` (from developers.circle.com/stablecoins/usdc-contract-addresses).
 - Native gas token: MON. Circle developer-controlled wallets need MON gas for outgoing transfers (Circle signs the EOA key, but the wallet pays gas).
-- Test wallets + private keys live in `recovery/wallet.json` (ADMIN/BUYER/SUPPLIER/INVESTOR_1/INVESTOR_2). NEVER commit. ADMIN funds deal wallets on-chain; SUPPLIER/INVESTOR receive payouts.
+- Test wallets + private keys live in `recovery/wallet.json` (BUYER/SUPPLIER/INVESTOR_1/INVESTOR_2). NEVER commit. SUPPLIER/INVESTOR receive payouts. The platform **admin** is a Circle developer-controlled wallet (see "Admin wallet" below), NOT the EOA in wallet.json.
 - Circle public faucet (faucet.circle.com) drips 20 USDC / 2h per address per chain. The `/v1/faucet/drips` API endpoint returns 403 Forbidden for this key tier — use the web faucet.
-- Funding path that works: ADMIN (external EOA, key held) sends USDC + MON on-chain to the Circle deal wallet address via ethers v6; then Circle `createTransaction` sends USDC from the deal wallet to any address. Verified end-to-end (deal->supplier 2 USDC, CONFIRMED, txHash 0x2f4b4d41...).
+- Funding path that works: an external funder (recovery/wallet.json EOA, key held) sends USDC + MON on-chain to the Circle deal wallet address via ethers v6; then Circle `createTransaction` sends USDC from the deal wallet to any address. Verified end-to-end (deal->supplier 2 USDC, CONFIRMED, txHash 0x2f4b4d41...).
+
+## Admin wallet (Circle developer-controlled, NOT a private key)
+
+The platform admin wallet is a **Circle developer-controlled wallet** in the wallet set — NOT an external EOA with a private key. Circle holds the key; the backend controls it via the entity secret. This is required because:
+- The admin must be able to **sign EIP-191 approval messages server-side** (`circleClient.signMessage`) — it can't sign with MetaMask since the key isn't held locally.
+- The admin wallet **receives the 3% platform fee** swept from each settled deal wallet.
+
+Config:
+- `CIRCLE_ADMIN_WALLET_ID` (env, optional) — the Circle wallet ID. Created once by `scripts/setup-admin-wallet.ts` (creates the wallet on MONAD-TESTNET + verifies `signMessage` works).
+- `CLEANVERSE_ADMIN_WALLET` (env) — the admin on-chain address; legacy address-only fallback when `CIRCLE_ADMIN_WALLET_ID` is unset (no server-side signing in that mode).
+- Created admin wallet: `7dca13cf-ec2e-5203-8dc7-961f6f45d850` @ `0x23f7dd7f5a7b538ec261d20850b0ec25837c8912` (MONAD-TESTNET).
+
+Flow (`auth.service.ts`):
+- `getAdminWalletAddress()` — resolves the admin address from `CIRCLE_ADMIN_WALLET_ID` via Circle SDK (cached), falls back to `CLEANVERSE_ADMIN_WALLET`.
+- `verifyAdminSignature(sig, msg)` — **async**; recovers the EIP-191 signer and checks it equals the admin address.
+- `signAsAdmin(msg)` — signs server-side with the Circle admin wallet via `circleClient.signMessage({ walletId, message })` → returns `{ signature, adminAddress }`.
+
+API contract (`contribute` + `payout-release`): `adminSignature`/`adminMessage` are now **OPTIONAL**.
+- Present → verified via `verifyAdminSignature` (must be the admin).
+- Absent → backend signs server-side via `signAsAdmin` (the admin key is held by Circle, can't sign with MetaMask).
+This also closed a security gap: previously `contribute`/`payout-release` called generic `verifySignature` and never confirmed the signer *was* the admin.
+
+Fee sweep (`settlement.service.ts calculateAndDistributePayouts`): after computing the 3% admin fee (subtracted from investor yield), `circleWalletService.sweepToAdminWallet({ dealWalletId, amount, dealId })` transfers the fee from the deal wallet to the admin wallet address. Best-effort — on failure the fee stays in the deal wallet for a manual sweep (investors can still claim).
+
+E2E verified (`scripts/test-admin-wallet.ts`): resolve address → `signAsAdmin` → `verifyAdminSignature` accepts (isAdmin=true) → forged sig rejected (isAdmin=false).
 
 ## Tooling
 - **Use `npx tsx` to run TS scripts** (e.g. `npx tsx scripts/test-create-wallet.ts`). `ts-node` is broken with TypeScript 7 (`Cannot read properties of undefined (reading 'fileExists')`). `tsx` is a devDependency. Scripts using top-level await must wrap in `async function main(){...}();`.
@@ -39,6 +64,8 @@ Two external integrations: **Cleanverse** (KYC/A-Pass, A-Token, fiat ramp) and *
 - `scripts/test-deal-wallet.ts` — exercises `CircleWalletService.createDealWallet` + getDealWallet/getDepositAddress/getWalletBalances round-trip.
 - `scripts/test-circle-auth.ts` — raw curl-style auth check (useful to debug 401s).
 - `scripts/test-verified-deposit.ts` — E2E for the unified verified-deposit pipeline: records a PENDING CRYPTO contribution, sends USDC on-chain from ADMIN → deal wallet, polls `DepositVerificationService.verifyCryptoDeposit` until the contribution flips to CONFIRMED with txHash + confirmedAt. Usage: `npx tsx scripts/test-verified-deposit.ts [dealWalletId]`.
+- `scripts/setup-admin-wallet.ts` — one-time: creates the platform admin Circle developer-controlled wallet (MONAD-TESTNET) + verifies `signMessage` works. Prints `CIRCLE_ADMIN_WALLET_ID` for `.env`. Usage: `npx tsx scripts/setup-admin-wallet.ts`.
+- `scripts/test-admin-wallet.ts` — E2E for the admin wallet: `getAdminWalletAddress` → `signAsAdmin` → `verifyAdminSignature` accepts → forged sig rejected. Usage: `npx tsx scripts/test-admin-wallet.ts`.
 
 ## Deposit verification pipeline (unified)
 The core invariant: **A-tokens are NEVER minted until a deposit is verified.** Two contribution paths feed one verification layer:
