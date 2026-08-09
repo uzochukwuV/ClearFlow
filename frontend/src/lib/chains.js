@@ -1,21 +1,21 @@
-// Monad testnet configuration for ClearFlow.
+// Base Sepolia configuration for ClearFlow.
 //
-// All wallet operations target Monad testnet. USDC is the 6-decimal ERC20 at
+// All wallet operations target Base Sepolia. USDC is the 6-decimal ERC20 at
 // the address below. The admin/deal wallets are Circle developer-controlled
-// wallets on this chain (blockchain id MONAD-TESTNET in Circle's API).
+// wallets on this chain (blockchain id BASE-SEPOLIA in Circle's API).
 
 export const MONAD_TESTNET = {
-  chainId: 10143, // hex form for MetaMask: 0x27bf
-  chainIdHex: '0x27bf',
-  name: 'Monad Testnet',
-  nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-  rpcUrls: ['https://rpc.ankr.com/monad_testnet', 'https://monad-testnet.drpc.org'],
-  blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+  chainId: 84532, // hex form for MetaMask: 0x14a34
+  chainIdHex: '0x14a34',
+  name: 'Base Sepolia',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: ['https://sepolia.base.org'],
+  blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
 
-// USDC on Monad testnet (6 decimals).
+// USDC on Base Sepolia (6 decimals).
 export const USDC = {
-  address: '0x534b2f3A21130d7a60830c2Df862319e593943A3',
+  address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   decimals: 6,
   symbol: 'USDC',
 };

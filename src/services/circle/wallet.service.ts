@@ -9,10 +9,10 @@ import { CircleBlockchain } from './types';
 /**
  * Maps ClearFlow's internal chain names to Circle's SDK blockchain values.
  *
- * ClearFlow uses lowercased chain names ('monad', 'polygon', ...) internally
+ * ClearFlow uses lowercased chain names ('base', 'polygon', ...) internally
  * (see constants.DEFAULT_CHAIN and the deal routes). These map to Circle's
  * network identifiers. The configured Circle API key is a TEST key, so we
- * target testnets (MONAD-TESTNET / MATIC-AMOY).
+ * target testnets (BASE-SEPOLIA / MATIC-AMOY).
  */
 const CHAIN_MAP: Record<string, string> = {
   MONAD: 'MONAD-TESTNET',
@@ -29,8 +29,8 @@ const CHAIN_MAP: Record<string, string> = {
 };
 
 function toSdkChain(chain?: string): string {
-  if (!chain) return 'MONAD-TESTNET';
-  return CHAIN_MAP[chain.toUpperCase()] ?? 'MONAD-TESTNET';
+  if (!chain) return 'BASE-SEPOLIA';
+  return CHAIN_MAP[chain.toUpperCase()] ?? 'BASE-SEPOLIA';
 }
 
 /**
@@ -90,7 +90,7 @@ export class CircleWalletService {
    */
   async createDealWallet(
     dealId: string,
-    chain: CircleBlockchain = 'MONAD'
+    chain: CircleBlockchain = 'BASE'
   ): Promise<{
     success: boolean;
     walletId?: string;

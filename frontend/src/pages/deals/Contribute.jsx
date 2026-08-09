@@ -166,7 +166,7 @@ export default function Contribute() {
                   <code className="flex-1 truncate rounded-md bg-card px-3 py-2 font-mono text-sm">{deal.dealWalletAddress}</code>
                   <Button size="sm" variant="outline" onClick={copyAddr}>{copied ? <CheckCircle2 className="h-4 w-4 text-ember" /> : <Copy className="h-4 w-4" />}</Button>
                 </div>
-                <p className="mt-3 text-xs text-slate">On Monad testnet. Verification runs automatically — no action needed.</p>
+                <p className="mt-3 text-xs text-slate">On Base Sepolia. Verification runs automatically — no action needed.</p>
               </div>
             )}
             {method === 'FIAT' && (

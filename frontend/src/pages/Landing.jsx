@@ -61,7 +61,7 @@ export default function Landing() {
             <div>
               <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-4 py-1.5 text-sm font-medium text-steel">
                 <span className="flex h-2 w-2 rounded-full bg-ember animate-pulse" />
-                Live on Monad testnet · USDC settlement
+                Live on Base Sepolia · USDC settlement
               </div>
               <h1 className="font-heading text-5xl font-medium leading-[0.95] tracking-tight text-foreground md:text-6xl">
                 Turn signed purchase orders into <span className="ember-underline">on-chain funding</span>

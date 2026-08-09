@@ -56,7 +56,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     deliveryDeadline: validated.deliveryDeadline ? new Date(validated.deliveryDeadline) : undefined,
     minInvestorTier: validated.minInvestorTier,
     eligibleCountries: validated.eligibleCountries,
-    chain: 'monad',
+    chain: 'base',
   });
 
   if (!result.success) {
@@ -145,7 +145,7 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
     adminAddress,
     dealId: validated.dealId,
     amount: validated.amount,
-    chain: 'monad',
+    chain: 'base',
     paymentMethod: validated.paymentMethod,
     fiatCurrency: validated.fiatCurrency,
     partnerCustomerId: validated.partnerCustomerId,
@@ -318,7 +318,7 @@ router.get('/:id/eligibility', asyncHandler(async (req: Request, res: Response) 
   const result = await dealService.checkEligibility({
     walletAddress: walletAddress as string,
     dealId,
-    chain: 'monad',
+    chain: 'base',
   });
 
   res.json({

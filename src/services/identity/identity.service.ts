@@ -3,6 +3,8 @@ import { prisma } from '../../config/database';
 import { logger } from '../../config';
 import { UserType } from '@prisma/client';
 
+const normalizeChain = (_chain?: string | null): string => 'base';
+
 export interface OnboardResult {
   success: boolean;
   apassId?: string;
@@ -53,7 +55,7 @@ export class IdentityService {
     try {
       // Call Cleanverse API to generate A-Pass
       const response = await this.aPassService.generateAPass({
-        chain,
+        chain: normalizeChain(chain),
         walletAddress,
         customerId,
         identityDataList,
@@ -67,6 +69,7 @@ export class IdentityService {
       }
 
       const apassData = response.data;
+      console.log(apassData)
 
       // Map Cleanverse response to our format
       const apassId = apassData.cvRecordId;
@@ -83,7 +86,7 @@ export class IdentityService {
         where: { walletAddress: walletAddress.toLowerCase() },
         update: {
           walletAddress: walletAddress.toLowerCase(),
-          chain,
+          chain: normalizeChain(chain),
           userType,
           customerId,
           apassId: apassId,
@@ -95,7 +98,7 @@ export class IdentityService {
         },
         create: {
           walletAddress: walletAddress.toLowerCase(),
-          chain,
+          chain: normalizeChain(chain),
           userType,
           customerId,
           apassId: apassId,
@@ -140,7 +143,7 @@ export class IdentityService {
     // Query Cleanverse for latest status
     try {
       const response = await this.aPassService.queryAPass({
-        chain: user.chain || 'polygon',
+        chain: normalizeChain(user.chain),
         walletAddress: user.walletAddress,
       });
 
@@ -188,19 +191,20 @@ export class IdentityService {
    * Verify A-Pass for a wallet (for gating)
    * Returns true if wallet has valid, active A-Pass
    */
-  async verifyAPass(walletAddress: string, chain: string = 'monad'): Promise<{
+  async verifyAPass(walletAddress: string, chain: string = 'base'): Promise<{
     valid: boolean;
     reason?: string;
     tier?: number;
     countries?: string[];
   }> {
-    logger.info({ walletAddress, chain }, 'Verifying A-Pass');
+    const normalizedChain = normalizeChain(chain);
+    logger.info({ walletAddress, chain: normalizedChain }, 'Verifying A-Pass');
 
     try {
       // Use queryAPass to check if user has a valid A-Pass
       // verifyAPass requires an A-Token address which we don't have during PO creation
       const response = await this.aPassService.queryAPass({
-        chain,
+        chain: normalizeChain(chain),
         walletAddress,
       });
 
@@ -284,11 +288,12 @@ export class IdentityService {
    * Freeze A-Pass (for compliance violations or defaults)
    */
   async freeze(walletAddress: string, chain: string, reason: string): Promise<boolean> {
+    const normalizedChain = normalizeChain(chain);
     logger.info({ walletAddress, reason }, 'Freezing A-Pass');
 
     try {
       const response = await this.aPassService.freeze({
-        chain,
+        chain: normalizeChain(chain),
         walletAddress,
         reason,
       });
@@ -314,11 +319,12 @@ export class IdentityService {
    * Unfreeze A-Pass (after compliance resolved)
    */
   async unfreeze(walletAddress: string, chain: string): Promise<boolean> {
+    const normalizedChain = normalizeChain(chain);
     logger.info({ walletAddress }, 'Unfreezing A-Pass');
 
     try {
       const response = await this.aPassService.unfreeze({
-        chain,
+        chain: normalizeChain(chain),
         walletAddress,
       });
 
@@ -342,12 +348,13 @@ export class IdentityService {
   /**
    * Batch verify multiple wallets
    */
-  async batchVerify(wallets: string[], chain: string = 'polygon'): Promise<Map<string, boolean>> {
+  async batchVerify(wallets: string[], chain: string = 'base'): Promise<Map<string, boolean>> {
+    const normalizedChain = normalizeChain(chain);
     const results = new Map<string, boolean>();
 
     await Promise.all(
       wallets.map(async (wallet) => {
-        const result = await this.verifyAPass(wallet, chain);
+        const result = await this.verifyAPass(wallet, normalizedChain);
         results.set(wallet, result.valid);
       })
     );

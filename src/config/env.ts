@@ -32,9 +32,9 @@ const envSchema = z.object({
   // the 3% platform fee here. Created by scripts/setup-admin-wallet.ts.
   CIRCLE_ADMIN_WALLET_ID: z.string().optional(),
 
-  // Monad testnet (on-chain deposit verification for Circle deal wallets)
-  MONAD_RPC_URL: z.string().url().default('https://rpc.ankr.com/monad_testnet'),
-  MONAD_USDC_ADDRESS: z.string().default('0x534b2f3A21130d7a60830c2Df862319e593943A3'),
+  // Base Sepolia (on-chain deposit verification for Circle deal wallets)
+  MONAD_RPC_URL: z.string().url().default('https://sepolia.base.org'),
+  MONAD_USDC_ADDRESS: z.string().default('0x036CbD53842c5426634e7929541eC2318f3dCF7e'),
 
   // Feature flags
   SKIP_CIRCLE_WALLET: z.string().default('false'),

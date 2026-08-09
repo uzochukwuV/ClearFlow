@@ -8,7 +8,7 @@ export const userTypeSchema = z.enum(['BUYER', 'SUPPLIER', 'INVESTOR', 'PLATFORM
 // Onboard identity
 export const onboardSchema = z.object({
   walletAddress: walletAddressSchema,
-  chain: chainSchema.default('polygon'),
+  chain: chainSchema.default('base'),
   userType: userTypeSchema,
   customerId: z.string().min(12).regex(/^[A-Za-z0-9]+$/, 'customerId must be alphanumeric, 12+ chars'),
   identityDataList: z.array(z.object({
@@ -25,7 +25,7 @@ export const identityStatusSchema = z.object({
 // Verify identity (for any wallet)
 export const verifyIdentitySchema = z.object({
   walletAddress: walletAddressSchema,
-  chain: chainSchema.default('polygon'),
+  chain: chainSchema.default('base'),
 });
 
 // Check investment eligibility for a deal
@@ -37,7 +37,7 @@ export const checkEligibilitySchema = z.object({
 // Freeze/unfreeze identity
 export const updateStatusSchema = z.object({
   walletAddress: walletAddressSchema,
-  chain: chainSchema.default('polygon'),
+  chain: chainSchema.default('base'),
   action: z.enum(['freeze', 'unfreeze']),
   reason: z.string().optional(),
 });

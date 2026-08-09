@@ -1,6 +1,7 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import type { CorsOptions } from 'cors';
 import morgan from 'morgan';
 import routes from './routes';
 import { errorHandler } from './middleware';
@@ -11,7 +12,17 @@ export function createApp(): Application {
 
   // Security middleware
   app.use(helmet());
-  app.use(cors());
+  // Permissive CORS for browser clients. This explicitly answers preflight
+  // requests from any origin, including localhost dev servers and deployed UIs.
+  const corsOptions: CorsOptions = {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    optionsSuccessStatus: 204,
+  };
+
+  app.use(cors(corsOptions));
 
   // Body parsing
   app.use(express.json());

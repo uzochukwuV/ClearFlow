@@ -54,7 +54,7 @@ export async function getAccounts() {
   }
 }
 
-// Ensure the wallet is on Monad testnet. Switch (or add) the chain if needed.
+// Ensure the wallet is on Base Sepolia. Switch (or add) the chain if needed.
 export async function ensureMonadTestnet() {
   const p = EIP1193_PROVIDER();
   if (!p) throw new Error('No wallet found.');
@@ -126,7 +126,7 @@ export async function signTypedData(typedData, account) {
 
 // Convenience: sign a Purchase Order (EIP-712). `po` is the CanonicalPO shape
 // { poReference, buyerAddress, supplierAddress, amount, currency, quantity,
-//   deliveryDate }. chainId defaults to Monad testnet (10143).
+//   deliveryDate }. chainId defaults to Base Sepolia (10143).
 export async function signPurchaseOrder(po, account, chainId = MONAD_TESTNET.chainId) {
   const typedData = buildPOTypedData(po, chainId);
   return signTypedData(typedData, account);

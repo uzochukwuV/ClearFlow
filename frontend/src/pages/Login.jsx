@@ -1,33 +1,76 @@
-import React from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useCallback, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-import { Button } from "@/components/ui/button";
-import { Wallet, Loader2, Layers } from "lucide-react";
-import AuthLayout from "@/components/AuthLayout";
-import { useWallet } from "@/lib/wallet";
-import { useAuth } from "@/lib/AuthContext";
-import { safeReturnTo } from "@/lib/authReturnTo";
+import { Button } from '@/components/ui/button';
+import { Wallet, Loader2, Layers } from 'lucide-react';
+import AuthLayout from '@/components/AuthLayout';
+import { useWallet } from '@/lib/wallet';
+import { useAuth } from '@/lib/AuthContext';
+import { safeReturnTo } from '@/lib/authReturnTo';
+import { useIdentityStatus } from '@/api/hooks';
+import { isApassActive } from '@/lib/identity';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { connect, connecting, address, hasWallet, error } = useWallet();
-  const { isAuthenticated } = useAuth();
+  const { connect, connecting, address, hasWallet, error, sign } = useWallet();
+  const { isAuthenticated, markOnboarded } = useAuth();
+  const identityStatus = useIdentityStatus();
   const returnTo = safeReturnTo();
+  const [checkingApass, setCheckingApass] = useState(false);
 
-  // If already connected + onboarded, go to app (or returnTo).
-  React.useEffect(() => {
+  const goToApp = useCallback(() => {
+    navigate(returnTo === '/' ? '/app' : returnTo, { replace: true });
+  }, [navigate, returnTo]);
+
+  const lastCheckedAddressRef = useRef(null);
+
+  useEffect(() => {
     if (isAuthenticated) {
-      navigate(returnTo === "/" ? "/app" : returnTo, { replace: true });
-    } else if (address) {
-      // Connected but not onboarded → go to onboarding.
-      navigate("/onboarding", { replace: true });
+      goToApp();
+      return;
     }
-  }, [isAuthenticated, address, navigate, returnTo]);
+
+    if (!address || !sign) return;
+    if (lastCheckedAddressRef.current === address) return;
+    lastCheckedAddressRef.current = address;
+
+    let cancelled = false;
+    const run = async () => {
+      setCheckingApass(true);
+      try {
+        const result = await identityStatus.mutateAsync({ walletAddress: address, signer: sign });
+        if (cancelled) return;
+
+        if (result?.registered && isApassActive(result.status)) {
+          markOnboarded({
+            apassId: result.apassId,
+            status: result.status,
+            tier: result.tier,
+          });
+          goToApp();
+          return;
+        }
+
+        navigate('/onboarding', { replace: true });
+      } catch {
+        if (!cancelled) navigate('/onboarding', { replace: true });
+      } finally {
+        if (!cancelled) setCheckingApass(false);
+        navigate('/onboarding', { replace: true });
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, sign, isAuthenticated, goToApp, identityStatus, markOnboarded, navigate]);
+
 
   const handleConnect = async () => {
     try {
       await connect();
-      // The useEffect above will redirect once `address` is set.
+      // The effect above will run the A-Pass preflight once address is set.
     } catch {
       /* error shown via wallet provider state */
     }
@@ -63,12 +106,12 @@ export default function Login() {
           <Button
             className="w-full h-12 font-medium"
             onClick={handleConnect}
-            disabled={connecting}
+            disabled={connecting || checkingApass}
           >
-            {connecting ? (
+            {connecting || checkingApass ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Connecting…
+                {connecting ? 'Connecting�' : 'Checking A-Pass�'}
               </>
             ) : (
               <>

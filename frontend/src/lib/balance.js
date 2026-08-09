@@ -1,4 +1,4 @@
-// On-chain balance reads for Monad testnet.
+// On-chain balance reads for Base Sepolia.
 //
 // These read balances DIRECTLY from the chain via an ethers JsonRpcProvider —
 // no Circle API key or entity secret required. Safe to call from the browser.

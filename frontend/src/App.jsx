@@ -36,6 +36,7 @@ import Claims from '@/pages/investor/Claims';
 // Supplier
 import Payouts from '@/pages/supplier/Payouts';
 
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth } = useAuth();
 
@@ -92,6 +93,7 @@ const AuthenticatedApp = () => {
 function App() {
 
   return (
+    
     <QueryClientProvider client={queryClientInstance}>
       <Router>
         <ScrollToTop />

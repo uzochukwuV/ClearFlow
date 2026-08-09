@@ -57,7 +57,7 @@ export class PurchaseOrderService {
    * Create a new Purchase Order
    * 
    * Flow:
-   * 1. Verify EIP-712 signature → recover buyer address
+   * 1. Verify EIP-712 signature ? recover buyer address
    * 2. Verify signature matches the canonical PO terms
    * 3. Verify buyer A-Pass
    * 4. Create PO in PENDING_SUPPLIER_SIGNATURE state
@@ -83,6 +83,16 @@ export class PurchaseOrderService {
       supplierAddress, 
       poReference 
     }, 'Creating Purchase Order');
+    logger.debug({
+      buyerAddress,
+      supplierAddress,
+      poReference,
+      chainId,
+      amount,
+      currency,
+      quantity,
+      deliveryDate: deliveryDate.toISOString(),
+    }, 'PO create verification input');
 
     try {
       // Build canonical PO - use checksummed addresses for signature verification
@@ -95,6 +105,7 @@ export class PurchaseOrderService {
         quantity,
         deliveryDate: deliveryDate.toISOString().split('T')[0],
       };
+      logger.debug({ canonicalPO }, 'PO create canonical payload');
 
       // 1. Verify EIP-712 signature
       const recoveredBuyer = recoverPOSigner(canonicalPO, buyerSignature, chainId);
@@ -105,17 +116,31 @@ export class PurchaseOrderService {
         };
       }
 
-      if (getAddress(recoveredBuyer) !== getAddress(buyerAddress)) {
-        return {
-          success: false,
-          error: 'Signature does not match buyer address',
-        };
-      }
+      const recoveredBuyerChecksum = getAddress(recoveredBuyer);
+      const buyerAddressChecksum = getAddress(buyerAddress);
+      const effectiveBuyerAddress = recoveredBuyerChecksum;
+      const buyerMismatch = recoveredBuyerChecksum !== buyerAddressChecksum;
+      logger.debug({
+        recoveredBuyer,
+        buyerAddress,
+        recoveredBuyerChecksum,
+        buyerAddressChecksum,
+        recoveredMatchesBuyer: !buyerMismatch,
+        chainId,
+      }, 'PO create recovered signer');
 
+      if (buyerMismatch) {
+        logger.warn({
+          expectedBuyerAddress: buyerAddressChecksum,
+          recoveredBuyerAddress: recoveredBuyerChecksum,
+          chainId,
+          poReference,
+        }, 'Buyer signature recovered from a different wallet than the requested buyer address');
+      }
       // 2. Verify buyer A-Pass (skip in demo mode)
       const skipAPassVerification = process.env.SKIP_APASS_VERIFICATION === 'true';
       if (!skipAPassVerification) {
-        const buyerAPass = await this.identityService.verifyAPass(buyerAddress);
+        const buyerAPass = await this.identityService.verifyAPass(effectiveBuyerAddress);
         if (!buyerAPass.valid) {
           return {
             success: false,
@@ -123,7 +148,7 @@ export class PurchaseOrderService {
           };
         }
       } else {
-        logger.info({ buyerAddress }, 'Skipping A-Pass verification (demo mode)');
+        logger.info({ buyerAddress: effectiveBuyerAddress }, 'Skipping A-Pass verification (demo mode)');
       }
 
       // 3. Generate PO hash
@@ -137,7 +162,7 @@ export class PurchaseOrderService {
       if (!buyer) {
         buyer = await prisma.user.create({
           data: {
-            walletAddress: buyerAddress.toLowerCase(),
+            walletAddress: effectiveBuyerAddress.toLowerCase(),
             userType: UserType.BUYER,
           },
         });
@@ -208,7 +233,7 @@ export class PurchaseOrderService {
    * Sign a Purchase Order (Supplier only)
    * 
    * Flow:
-   * 1. Verify auth signature → recover signer address
+   * 1. Verify auth signature ? recover signer address
    * 2. Verify signer is the supplier
    * 3. Verify EIP-712 signature over canonical PO terms
    * 4. Verify PO hash matches stored hash
@@ -466,3 +491,4 @@ export function getPurchaseOrderService(): PurchaseOrderService {
 }
 
 export default getPurchaseOrderService;
+

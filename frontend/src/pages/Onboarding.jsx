@@ -149,6 +149,7 @@ export default function Onboarding() {
           userType: selectedRole,
           customerId,
           identityDataList,
+          chain: 'base',
         },
         signer: sign,
       });
@@ -440,7 +441,7 @@ export default function Onboarding() {
               </div>
               <CardTitle className="mt-4 font-heading text-2xl font-medium">Verifying your identity</CardTitle>
               <CardDescription>
-                Your A-Pass is being issued on Monad testnet. This usually takes a few seconds.
+                Your A-Pass is being issued on Base Sepolia. This usually takes a few seconds.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

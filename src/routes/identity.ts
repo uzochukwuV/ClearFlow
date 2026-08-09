@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware';
 import { getIdentityService } from '../services/identity';
+import { prisma } from '../config/database';
 import { getAuthService } from '../services/auth';
 import { 
   onboardRequestSchema, 
@@ -76,8 +77,58 @@ router.post('/onboard', asyncHandler(async (req: Request, res: Response) => {
       walletAddress: authResult.walletAddress,
     },
   });
-}));
 
+}));
+/**
+ * GET /identity/profile/:walletAddress
+ * Read-only A-Pass profile for dashboard display.
+ * Public endpoint: no signature required.
+ */
+router.get('/profile/:walletAddress', asyncHandler(async (req: Request, res: Response) => {
+  const walletAddress = String(req.params.walletAddress).toLowerCase();
+  const chain = typeof req.query.chain === 'string' ? req.query.chain : undefined;
+
+  logger.info({ walletAddress }, 'Identity profile request');
+
+  const initialUser = await prisma.user.findUnique({
+    where: { walletAddress },
+  });
+
+  if (!initialUser) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        message: 'User not found',
+      },
+    });
+  }
+
+  const status = await identityService.getStatus(walletAddress);
+  const user = await prisma.user.findUnique({
+    where: { walletAddress },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      walletAddress: user?.walletAddress ?? walletAddress,
+      chain: user?.chain ?? chain ?? 'base',
+      userType: user?.userType,
+      customerId: user?.customerId ?? null,
+      email: user?.email ?? null,
+      registered: status.registered,
+      apassId: status.apassId ?? user?.apassId ?? null,
+      apassAddress: user?.apassAddress ?? null,
+      apassTxHash: user?.apassTxHash ?? null,
+      status: status.status ?? user?.apassStatus ?? null,
+      tier: status.tier ?? user?.apassTier ?? null,
+      countries: status.countries ?? user?.apassCountries ?? [],
+      expirationTime: status.expirationTime ?? (user?.apassExpiration ? Math.floor(user.apassExpiration.getTime() / 1000) : null),
+      createdAt: user?.createdAt ?? null,
+      updatedAt: user?.updatedAt ?? null,
+    },
+  });
+}));
 /**
  * POST /identity/status
  * Get A-Pass status for a wallet

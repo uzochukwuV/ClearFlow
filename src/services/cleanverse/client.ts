@@ -122,13 +122,14 @@ export class CleanverseClient {
       });
 
       const rawResponse = await response.text();
-      
+      console.log(rawResponse)
       // Try parsing as encrypted response first
       try {
         const parsed = JSON.parse(rawResponse);
         if (parsed.data && typeof parsed.data === 'string') {
           // Decrypt response
           const decrypted = await this.decrypt(parsed.data);
+          console.log(decrypted)
           responseBody = {
             code: parsed.code,
             message: parsed.message,

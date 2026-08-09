@@ -21,8 +21,6 @@ export function WalletProvider({ children }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState(null);
 
-  // Restore a previously-connected wallet (accounts already authorized in MetaMask
-  // are remembered, so we can re-read them without prompting).
   const restore = useCallback(async () => {
     if (!hasWallet()) return;
     try {
@@ -48,7 +46,6 @@ export function WalletProvider({ children }) {
     restore();
   }, [restore]);
 
-  // Listen for account / chain changes from MetaMask.
   useEffect(() => {
     if (!hasWallet()) return;
     const p = window.ethereum;
@@ -88,7 +85,6 @@ export function WalletProvider({ children }) {
       const accounts = await requestAccounts();
       const addr = accounts[0];
       if (!addr) throw new Error('No account returned by wallet.');
-      // Ensure Monad testnet is selected (switch/add if needed).
       const cid = await ensureMonadTestnet();
       setChainId(cid);
       setAddress(addr);
@@ -108,11 +104,8 @@ export function WalletProvider({ children }) {
     setAddress(null);
     setRoleState(null);
     setChainId(null);
-    // Note: MetaMask does not support programmatic disconnect; the user must
-    // disconnect from the wallet UI. We just clear local state.
   }, []);
 
-  // Sign an EIP-191 message with the connected account (personal_sign).
   const sign = useCallback(
     async (message) => {
       if (!address) throw new Error('Wallet not connected.');
@@ -121,13 +114,22 @@ export function WalletProvider({ children }) {
     [address]
   );
 
-  // Sign an EIP-712 Purchase Order with the connected account.
   const signPurchaseOrder = useCallback(
     (po) => {
       if (!address) throw new Error('Wallet not connected.');
+      console.debug('[Wallet:signPurchaseOrder] signing PO', {
+        walletAddress: address,
+        chainId,
+        poReference: po?.poReference,
+        buyerAddress: po?.buyerAddress,
+        supplierAddress: po?.supplierAddress,
+        amount: po?.amount,
+        quantity: po?.quantity,
+        deliveryDate: po?.deliveryDate,
+      });
       return _signPurchaseOrder(po, address);
     },
-    [address]
+    [address, chainId]
   );
 
   const shortAddr = useCallback((addr) => shortAddress(addr || address), [address]);
