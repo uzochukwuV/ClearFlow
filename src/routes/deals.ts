@@ -211,6 +211,136 @@ router.get('/open', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /deals/buyer/:address
+ *
+ * List deals created by a specific buyer (no auth — filtered by walletAddress).
+ * Returns deals where the underlying PO's buyer wallet matches.
+ */
+router.get('/buyer/:address', async (req: Request, res: Response) => {
+  try {
+    const buyerAddress = String(req.params.address).toLowerCase();
+
+    const deals = await prisma.deal.findMany({
+      where: {
+        purchaseOrder: {
+          buyer: { walletAddress: buyerAddress },
+        },
+      },
+      include: {
+        purchaseOrder: {
+          select: {
+            poReference: true,
+            amount: true,
+            supplier: { select: { walletAddress: true } },
+          },
+        },
+        contributions: {
+          where: { status: 'CONFIRMED' },
+          select: { amount: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    const formattedDeals = deals.map((d) => {
+      const target = parseFloat(d.targetAmount.toString());
+      const funded = parseFloat(d.runningTotal.toString());
+      return {
+        dealId: d.id,
+        atokenSymbol: d.atokenSymbol,
+        poReference: d.purchaseOrder.poReference,
+        supplierAddress: d.purchaseOrder.supplier.walletAddress,
+        targetAmount: target,
+        fundedAmount: funded,
+        fundedPercent: target > 0 ? Math.round((funded / target) * 100) : 0,
+        remainingCapacity: Math.max(0, target - funded),
+        yieldPercent: d.yieldPercent,
+        status: d.status,
+        currency: d.currency,
+        fundingDeadline: d.fundingDeadline,
+        deliveryDeadline: d.deliveryDeadline,
+        eligibleCountries: d.eligibleCountries,
+        createdAt: d.createdAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: { deals: formattedDeals, count: formattedDeals.length },
+    });
+  } catch (error) {
+    logger.error({ error }, 'List buyer deals error');
+    res.status(500).json({ success: false, error: 'Failed to list buyer deals' });
+  }
+});
+
+/**
+ * GET /deals/supplier/:address
+ *
+ * List deals where the supplier is a specific wallet (no auth — filtered by
+ * walletAddress). Returns deals where the underlying PO's supplier wallet matches.
+ * This is how a supplier sees deals related to them (from POs they signed).
+ */
+router.get('/supplier/:address', async (req: Request, res: Response) => {
+  try {
+    const supplierAddress = String(req.params.address).toLowerCase();
+
+    const deals = await prisma.deal.findMany({
+      where: {
+        purchaseOrder: {
+          supplier: { walletAddress: supplierAddress },
+        },
+      },
+      include: {
+        purchaseOrder: {
+          select: {
+            poReference: true,
+            amount: true,
+            buyer: { select: { walletAddress: true } },
+          },
+        },
+        contributions: {
+          where: { status: 'CONFIRMED' },
+          select: { amount: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    const formattedDeals = deals.map((d) => {
+      const target = parseFloat(d.targetAmount.toString());
+      const funded = parseFloat(d.runningTotal.toString());
+      return {
+        dealId: d.id,
+        atokenSymbol: d.atokenSymbol,
+        poReference: d.purchaseOrder.poReference,
+        buyerAddress: d.purchaseOrder.buyer.walletAddress,
+        targetAmount: target,
+        fundedAmount: funded,
+        fundedPercent: target > 0 ? Math.round((funded / target) * 100) : 0,
+        remainingCapacity: Math.max(0, target - funded),
+        yieldPercent: d.yieldPercent,
+        status: d.status,
+        currency: d.currency,
+        fundingDeadline: d.fundingDeadline,
+        deliveryDeadline: d.deliveryDeadline,
+        createdAt: d.createdAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: { deals: formattedDeals, count: formattedDeals.length },
+    });
+  } catch (error) {
+    logger.error({ error }, 'List supplier deals error');
+    res.status(500).json({ success: false, error: 'Failed to list supplier deals' });
+  }
+});
+
+/**
  * GET /deals/:dealId
  * 
  * Get detailed deal information

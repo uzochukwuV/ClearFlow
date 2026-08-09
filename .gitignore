@@ -40,3 +40,4 @@ recovery/
 # Test private keys
 *.private-key.json
 test-private-keys.json
+*.zip
