@@ -129,6 +129,10 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
     dealId: validated.dealId,
     amount: validated.amount,
     chain: 'monad',
+    paymentMethod: validated.paymentMethod,
+    fiatCurrency: validated.fiatCurrency,
+    partnerCustomerId: validated.partnerCustomerId,
+    mintTokensOnConfirm: validated.mintTokensOnConfirm,
   });
 
   if (!result.success) {
@@ -142,10 +146,14 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
     success: true,
     data: {
       contributionId: result.contributionId,
+      contributionStatus: result.contributionStatus,
       tokenAmount: result.tokenAmount,
-      rampReceiptId: result.rampReceiptId,
+      dealWalletAddress: result.dealWalletAddress,
+      txHash: result.txHash,
+      rampOrderId: result.rampOrderId,
+      rampQuoteToken: result.rampQuoteToken,
+      rampWidgetUrl: result.rampWidgetUrl,
       rampTxHash: result.rampTxHash,
-      status: 'CONFIRMED',
     },
   });
 }));

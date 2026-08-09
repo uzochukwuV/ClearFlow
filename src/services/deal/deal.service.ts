@@ -2,7 +2,9 @@ import { prisma } from '../../config/database';
 import { getIdentityService } from '../identity';
 import { getATokenService, getRampService } from '../cleanverse';
 import { getCircleWalletService } from '../circle';
+import { getDepositVerificationService } from '../funding';
 import { CircleBlockchain } from '../circle/types';
+import { ContributionStatus, ContributionType } from '@prisma/client';
 import { logger } from '../../config';
 
 export interface CreateDealResult {
@@ -16,8 +18,15 @@ export interface CreateDealResult {
 export interface ContributeResult {
   success: boolean;
   contributionId?: string;
+  contributionStatus?: string;
   tokenAmount?: string;
-  rampReceiptId?: string;
+  // Crypto path
+  dealWalletAddress?: string;
+  txHash?: string;
+  // Fiat path
+  rampOrderId?: string;
+  rampQuoteToken?: string;
+  rampWidgetUrl?: string;
   rampTxHash?: string;
   adminAddress?: string;
   error?: string;
@@ -68,6 +77,7 @@ export class DealService {
   private aTokenService = getATokenService();
   private circleWalletService = getCircleWalletService();
   private rampService = getRampService();
+  private depositVerificationService = getDepositVerificationService();
 
   /**
    * Create a Financing Deal
@@ -228,15 +238,27 @@ export class DealService {
   }
 
   /**
-   * Contribute to a Deal
-   * 
-   * Flow:
-   * 1. Verify deal is OPEN
-   * 2. Verify investor A-Pass meets compliance rules
-   * 3. Record contribution
-   * 4. Transfer USDC to deal wallet (via Circle)
-   * 5. Calculate and mint POF tokens to investor
-   * 6. Update deal running total
+   * Contribute to a Deal — unified Intent → Verify → Mint pipeline.
+   *
+   * Two payment paths, both funnelling through one verification layer:
+   *
+   *   CRYPTO  — investor sends USDC directly to the deal wallet on-chain.
+   *             Backend returns the deal wallet address + expected amount; the
+   *             investor performs the transfer out-of-band. Verification happens
+   *             asynchronously via DepositVerificationService (Circle
+   *             listTransactions + on-chain balanceOf). Tokens are minted only
+   *             once the deposit is CONFIRMED.
+   *
+   *   FIAT    — investor pays fiat via the Cleanverse ramp. Backend obtains a
+   *             ramp quote, creates the widget URL for the investor to complete
+   *             payment, and records the rampOrderId / rampQuoteToken.
+   *             Verification polls query_ramp_order to COMPLETED, then confirms
+   *             the USDC landed in the deal wallet. Tokens minted on CONFIRMED.
+   *
+   * In both cases the Contribution is created PENDING and only the
+   * DepositVerificationService flips it to CONFIRMED. `mintTokensOnConfirm`
+   * controls whether this call blocks on verification (synchronous) or leaves
+   * it to the background poll-ramp-order / verify-deposit jobs (async).
    */
   async contribute(params: {
     investorAddress: string;
@@ -244,42 +266,56 @@ export class DealService {
     dealId: string;
     amount: string;
     chain: string;
+    paymentMethod?: 'CRYPTO' | 'FIAT';
+    // Fiat-ramp inputs (only used when paymentMethod === 'FIAT')
+    fiatCurrency?: string;
+    partnerCustomerId?: string;
+    // When true, block until the deposit verifies and mint immediately.
+    // Default false → return PENDING and let background jobs verify + mint.
+    mintTokensOnConfirm?: boolean;
   }): Promise<ContributeResult> {
-    const { investorAddress, adminAddress, dealId, amount, chain } = params;
+    const {
+      investorAddress,
+      adminAddress,
+      dealId,
+      amount,
+      chain,
+      paymentMethod = 'CRYPTO',
+      fiatCurrency,
+      partnerCustomerId,
+      mintTokensOnConfirm = false,
+    } = params;
 
-    logger.info({ investorAddress, adminAddress, dealId, amount }, 'Processing contribution with admin approval');
+    logger.info(
+      { investorAddress, adminAddress, dealId, amount, paymentMethod },
+      'Processing contribution'
+    );
 
     try {
-      // 1. Get deal
-      const deal = await prisma.deal.findUnique({
-        where: { id: dealId },
-      });
-
-      if (!deal) {
-        return { success: false, error: 'Deal not found' };
-      }
-
-      if (deal.status !== "OPEN") {
+      // 1. Get deal + guard
+      const deal = await prisma.deal.findUnique({ where: { id: dealId } });
+      if (!deal) return { success: false, error: 'Deal not found' };
+      if (deal.status !== 'OPEN') {
         return { success: false, error: `Deal is not open for contributions. Status: ${deal.status}` };
       }
+      if (!deal.circleWalletId || !deal.circleWalletAddress) {
+        return { success: false, error: 'Deal has no Circle wallet' };
+      }
 
-      // 2. Verify investor A-Pass (skip in demo mode)
+      // 2. Verify investor A-Pass + compliance rules (unless demo mode)
       const skipAPassVerification = process.env.SKIP_APASS_VERIFICATION === 'true';
       if (!skipAPassVerification) {
         const aPassVerification = await this.identityService.verifyAPass(investorAddress, chain);
         if (!aPassVerification.valid) {
           return { success: false, error: `Investor A-Pass verification failed: ${aPassVerification.reason}` };
         }
-
-        // 3. Check compliance rules
         if (deal.minInvestorTier && aPassVerification.tier !== undefined) {
           if (aPassVerification.tier < deal.minInvestorTier) {
             return { success: false, error: `Investor tier ${aPassVerification.tier} below minimum ${deal.minInvestorTier}` };
           }
         }
-
         if (deal.eligibleCountries.length > 0 && aPassVerification.countries) {
-          const hasEligibleCountry = aPassVerification.countries.some(c => 
+          const hasEligibleCountry = aPassVerification.countries.some((c: string) =>
             deal.eligibleCountries.includes(c)
           );
           if (!hasEligibleCountry) {
@@ -290,161 +326,148 @@ export class DealService {
         logger.info({ investorAddress }, 'Skipping A-Pass verification (demo mode)');
       }
 
-      // 4. Find or create investor user
+      // 3. Find or create investor user
       let investor = await prisma.user.findUnique({
         where: { walletAddress: investorAddress.toLowerCase() },
       });
-
       if (!investor) {
         investor = await prisma.user.create({
-          data: {
-            walletAddress: investorAddress.toLowerCase(),
-            userType: 'INVESTOR',
-          },
+          data: { walletAddress: investorAddress.toLowerCase(), userType: 'INVESTOR' },
         });
       }
 
-      // 5. Create contribution record (PENDING until ramp payment confirmed)
+      // 4. INTENT — create the Contribution PENDING with full provenance
+      const contributionType: ContributionType =
+        paymentMethod === 'FIAT' ? ContributionType.FIAT : ContributionType.CRYPTO;
+
       const contribution = await prisma.contribution.create({
         data: {
           dealId,
           investorId: investor.id,
-          amount: amount,
+          amount,
           currency: 'USDC',
-          type: 'FIAT_ONRAMP',  // Changed from CRYPTO to reflect real payment
-          status: 'PENDING',
+          type: contributionType,
+          status: ContributionStatus.PENDING,
+          toAddress: deal.circleWalletAddress,
+          fromAddress: contributionType === ContributionType.CRYPTO ? investorAddress.toLowerCase() : null,
         },
       });
 
-      // 6. Execute fiat onramp via Cleanverse Ramp (fund deal wallet)
-      // This simulates the investor's fiat payment through Clearverse's ramp service
-      const contributionAmount = parseFloat(amount);
-      let rampReceiptId: string | undefined;
-      let rampTxHash: string | undefined;
+      // 5. FUNDING SOURCE — record how the investor will pay
+      let rampOrderId: string | undefined;
+      let rampQuoteToken: string | undefined;
+      let rampWidgetUrl: string | undefined;
 
-      try {
-        // Get the deal wallet address
-        const dealWalletAddress = deal.circleWalletAddress || '0x' + '0'.repeat(40);
-        
-        logger.info({ 
-          investorAddress, 
-          dealId, 
-          amount: contributionAmount,
-          dealWalletAddress
-        }, 'Executing fiat onramp via Cleanverse Ramp');
-
-        // Call Cleanverse ramp/faucet to fund the deal wallet
-        // In production, this would be a full fiat onramp flow
-        // For demo, we use the faucet endpoint
-        const rampResponse = await this.rampService.requestFaucet({
-          chain: chain,
-          symbol: 'USDC',
-          depositAddress: dealWalletAddress,
-          amount: amount,
+      if (contributionType === ContributionType.FIAT) {
+        // Real ramp flow: quote → widget URL. Investor completes payment out-of-band.
+        const quoteRes = await this.rampService.getOnRampQuote({
+          fiatAmount: amount,
+          fiatCurrency: fiatCurrency || 'USD',
+          partnerCustomerId: partnerCustomerId || investor.id,
         });
-
-        // Check if the response was successful
-        if (rampResponse.code === '0000' && rampResponse.data) {
-          // Use tx_hash from the response (snake_case in Cleanverse API)
-          rampReceiptId = rampResponse.data.tx_hash || `RAMP-${Date.now()}`;
-          rampTxHash = rampResponse.data.tx_hash;
-          
-          logger.info({ 
-            rampReceiptId, 
-            rampTxHash,
-            dealWalletAddress 
-          }, 'Fiat onramp confirmed via Cleanverse');
-
-          // Update contribution with ramp receipt
-          await prisma.contribution.update({
-            where: { id: contribution.id },
-            data: { 
-              rampReceiptId: rampReceiptId,
-              rampTxHash: rampTxHash,
-              status: 'CONFIRMED',
-            },
-          });
-        } else {
-          // For demo mode without real ramp, still confirm the contribution
-          logger.warn({ 
-            error: rampResponse.message 
-          }, 'Ramp call failed, using demo mode');
-          
-          rampReceiptId = `DEMO-RAMP-${Date.now()}-${contribution.id.substring(0, 8)}`;
-          await prisma.contribution.update({
-            where: { id: contribution.id },
-            data: { 
-              rampReceiptId: rampReceiptId,
-              status: 'CONFIRMED',
-            },
-          });
+        if (!this.rampService['client'].isSuccess(quoteRes) || !quoteRes.data) {
+          await this.markContributionFailed(contribution.id, 'Ramp quote failed');
+          return { success: false, error: `Ramp quote failed: ${this.rampService['client'].getError(quoteRes)}` };
         }
-      } catch (rampError) {
-        logger.error({ error: rampError }, 'Ramp onramp failed');
-        // Still confirm in demo mode
-        rampReceiptId = `DEMO-RAMP-${Date.now()}-${contribution.id.substring(0, 8)}`;
+        rampQuoteToken = (quoteRes.data as any).quoteToken;
+        if (!rampQuoteToken) {
+          await this.markContributionFailed(contribution.id, 'Ramp quote returned no quoteToken');
+          return { success: false, error: 'Ramp quote returned no quoteToken' };
+        }
+
+        const widgetRes = await this.rampService.createWidgetUrl({
+          quoteToken: rampQuoteToken,
+          walletAddress: deal.circleWalletAddress,
+          walletChain: chain,
+        });
+        if (this.rampService['client'].isSuccess(widgetRes) && widgetRes.data) {
+          rampWidgetUrl = (widgetRes.data as any).url;
+          // orderId is assigned by Cleanverse when the widget payment completes;
+          // it arrives via the ramp webhook or the next query_ramp_order call.
+        }
+
         await prisma.contribution.update({
           where: { id: contribution.id },
-          data: { 
-            rampReceiptId: rampReceiptId,
-            status: 'CONFIRMED',
-          },
+          data: { rampQuoteToken },
         });
+
+        logger.info(
+          { contributionId: contribution.id, rampOrderId, rampQuoteToken, hasWidgetUrl: !!rampWidgetUrl },
+          'Fiat ramp initiated — investor must complete payment in widget'
+        );
+      } else {
+        // CRYPTO path: nothing to initiate — the investor sends USDC on-chain.
+        // We return the deal wallet address so the frontend can show it.
+        logger.info(
+          { contributionId: contribution.id, dealWalletAddress: deal.circleWalletAddress, amount },
+          'Crypto contribution recorded — awaiting investor on-chain transfer'
+        );
       }
 
-      // 7. Calculate POF token amount (1:1 ratio - $1 USDC = 1 A-token)
-      const targetAmount = parseFloat(deal.targetAmount.toString());
-      const totalSupply = parseFloat(deal.totalSupply.toString()) || 0;
-      const tokenAmount = contributionAmount; // 1:1 ratio
+      // 6. VERIFY + MINT
+      //    Synchronous mode: block until the deposit verifies, then mint.
+      //    Async mode (default): return PENDING; background jobs verify + mint.
+      let tokenAmount: string | undefined;
+      let txHash: string | undefined;
+      let rampTxHash: string | undefined;
+      let contributionStatus: ContributionStatus = ContributionStatus.PENDING;
 
-      // 8. Mint A-tokens to investor
-      // A-tokens represent the investor's share of the deal
-      try {
-        if (deal.atokenAddress) {
-          await this.aTokenService.mint({ atokenAddress: deal.atokenAddress, address: investorAddress, amount: tokenAmount.toString() });
-          logger.info({ atokenAddress: deal.atokenAddress, investorAddress, tokenAmount }, 'A-tokens minted to investor');
-        } else {
-          logger.warn({ dealId }, 'No A-token address configured, skipping mint');
+      if (mintTokensOnConfirm) {
+        const pollResult = await this.depositVerificationService.pollUntilVerified(contribution.id, {
+          maxAttempts: 60,
+          intervalMs: 10000,
+        });
+        if (!pollResult.verified) {
+          return {
+            success: false,
+            contributionId: contribution.id,
+            contributionStatus: ContributionStatus.PENDING,
+            error: pollResult.error || 'Deposit verification timed out',
+            adminAddress,
+          };
         }
-      } catch (mintError) {
-        logger.error({ error: mintError, dealId, investorAddress }, 'Failed to mint A-tokens');
-        // Continue anyway in demo mode
+        const minted = await this.mintTokensForContribution(contribution.id);
+        tokenAmount = minted.tokenAmount;
+        txHash = minted.txHash;
+        rampTxHash = minted.rampTxHash;
+        contributionStatus = ContributionStatus.CONFIRMED;
+      } else {
+        // Async: enqueue a background verification job. Lazy import avoids the
+        // jobs <-> services module cycle.
+        try {
+          const { addJob } = await import('../../jobs/queue');
+          const jobName =
+            contributionType === ContributionType.FIAT ? 'poll-ramp-order' : 'verify-deposit';
+          await addJob(jobName, { contributionId: contribution.id }, { attempts: 30 });
+          logger.info({ contributionId: contribution.id, jobName }, 'Enqueued background deposit-verification job');
+        } catch (jobError) {
+          // If Redis/the queue is unavailable, fall back to a single inline check
+          // so the contribution is not stranded.
+          logger.warn({ error: jobError, contributionId: contribution.id }, 'Could not enqueue verification job — running inline check');
+          const check =
+            contributionType === ContributionType.FIAT
+              ? await this.depositVerificationService.verifyFiatDeposit(contribution.id)
+              : await this.depositVerificationService.verifyCryptoDeposit(contribution.id);
+          if (check.verified) {
+            const minted = await this.mintTokensForContribution(contribution.id);
+            tokenAmount = minted.tokenAmount;
+            txHash = minted.txHash;
+            rampTxHash = minted.rampTxHash;
+            contributionStatus = ContributionStatus.CONFIRMED;
+          }
+        }
       }
-
-      // 9. Update deal running total and total supply
-      const newRunningTotal = parseFloat(deal.runningTotal.toString()) + contributionAmount;
-      const newTotalSupply = totalSupply + tokenAmount;
-
-      await prisma.deal.update({
-        where: { id: dealId },
-        data: {
-          runningTotal: newRunningTotal,
-          totalSupply: newTotalSupply,
-        },
-      });
-
-      // 10. Check if deal is fully funded
-      if (newRunningTotal >= targetAmount) {
-        await prisma.deal.update({
-          where: { id: dealId },
-          data: { status: "FUNDED" },
-        });
-        logger.info({ dealId }, 'Deal fully funded');
-      }
-
-      logger.info({ 
-        dealId, 
-        contributionId: contribution.id, 
-        tokenAmount,
-        rampReceiptId,
-        adminAddress 
-      }, 'Contribution processed - POF tokens minted');
 
       return {
         success: true,
         contributionId: contribution.id,
-        tokenAmount: tokenAmount.toString(),
-        rampReceiptId,
+        contributionStatus,
+        tokenAmount,
+        dealWalletAddress: deal.circleWalletAddress,
+        txHash,
+        rampOrderId,
+        rampQuoteToken,
+        rampWidgetUrl,
         rampTxHash,
         adminAddress,
       };
@@ -455,6 +478,82 @@ export class DealService {
         error: error instanceof Error ? error.message : 'Failed to contribute',
       };
     }
+  }
+
+  /**
+   * Mint POF A-Tokens for a CONFIRMED contribution and update deal totals.
+   * Called by the contribute() synchronous path and by the background
+   * verify-deposit job once a deposit is confirmed. Idempotent: if the
+   * contribution is already CONFIRMED with tokens minted (totalSupply already
+   * reflects it), this is a no-op.
+   */
+  async mintTokensForContribution(contributionId: string): Promise<{
+    minted: boolean;
+    tokenAmount?: string;
+    txHash?: string;
+    rampTxHash?: string;
+    error?: string;
+  }> {
+    const contribution = await prisma.contribution.findUnique({
+      where: { id: contributionId },
+      include: { deal: true, investor: true },
+    });
+    if (!contribution) return { minted: false, error: 'Contribution not found' };
+    if (contribution.status !== ContributionStatus.CONFIRMED) {
+      return { minted: false, error: `Contribution not confirmed (status: ${contribution.status})` };
+    }
+
+    const deal = contribution.deal;
+    const tokenAmount = contribution.amount; // 1:1 ratio — 1 USDC = 1 POF token
+
+    // Mint A-Tokens to the investor.
+    if (deal.atokenAddress) {
+      try {
+        await this.aTokenService.mint({
+          atokenAddress: deal.atokenAddress,
+          address: contribution.investor.walletAddress,
+          amount: tokenAmount,
+        });
+        logger.info(
+          { contributionId, atokenAddress: deal.atokenAddress, investor: contribution.investor.walletAddress, tokenAmount },
+          'A-Tokens minted to investor after verified deposit'
+        );
+      } catch (mintError) {
+        logger.error({ error: mintError, contributionId }, 'Failed to mint A-Tokens');
+        return { minted: false, error: 'A-Token mint failed' };
+      }
+    } else {
+      logger.warn({ dealId: deal.id, contributionId }, 'No A-token address configured, skipping mint');
+    }
+
+    // Update deal running total + total supply.
+    const newRunningTotal = parseFloat(deal.runningTotal.toString()) + parseFloat(tokenAmount);
+    const newTotalSupply = parseFloat(deal.totalSupply.toString()) + parseFloat(tokenAmount);
+    await prisma.deal.update({
+      where: { id: deal.id },
+      data: { runningTotal: newRunningTotal, totalSupply: newTotalSupply },
+    });
+
+    // Flip deal to FUNDED if target reached.
+    if (newRunningTotal >= parseFloat(deal.targetAmount.toString())) {
+      await prisma.deal.update({ where: { id: deal.id }, data: { status: 'FUNDED' } });
+      logger.info({ dealId: deal.id }, 'Deal fully funded');
+    }
+
+    return {
+      minted: true,
+      tokenAmount,
+      txHash: contribution.txHash || undefined,
+      rampTxHash: contribution.rampTxHash || undefined,
+    };
+  }
+
+  private async markContributionFailed(contributionId: string, reason: string) {
+    await prisma.contribution.update({
+      where: { id: contributionId },
+      data: { status: ContributionStatus.FAILED },
+    });
+    logger.warn({ contributionId, reason }, 'Contribution marked FAILED');
   }
 
   /**

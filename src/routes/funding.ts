@@ -6,6 +6,109 @@ const router = Router();
 const fundingService = getFundingService();
 
 /**
+ * GET /funding/contributions/:contributionId
+ *
+ * Get a single contribution's status + verification details.
+ * Frontend polls this after POST /deals/:id/contribute returns a PENDING
+ * contribution to know when the deposit is confirmed and tokens are minted.
+ */
+router.get('/contributions/:contributionId', async (req: Request, res: Response) => {
+  try {
+    const contributionId = req.params.contributionId as string;
+    const { prisma } = await import('../config/database');
+
+    const contribution = await prisma.contribution.findUnique({
+      where: { id: contributionId },
+      include: { deal: true, investor: true },
+    });
+
+    if (!contribution) {
+      return res.status(404).json({ success: false, error: 'Contribution not found' });
+    }
+
+    res.json({
+      success: true,
+      contribution: {
+        id: contribution.id,
+        dealId: contribution.dealId,
+        type: contribution.type,
+        status: contribution.status,
+        amount: contribution.amount,
+        currency: contribution.currency,
+        // Deposit provenance (populated on confirmation)
+        txHash: contribution.txHash,
+        fromAddress: contribution.fromAddress,
+        toAddress: contribution.toAddress,
+        confirmedAt: contribution.confirmedAt,
+        // Ramp (FIAT path)
+        rampOrderId: contribution.rampOrderId,
+        rampQuoteToken: contribution.rampQuoteToken,
+        rampTxHash: contribution.rampTxHash,
+        // Deal context for display
+        dealWalletAddress: contribution.deal.circleWalletAddress,
+        atokenSymbol: contribution.deal.atokenSymbol,
+        dealStatus: contribution.deal.status,
+        dealTarget: contribution.deal.targetAmount.toString(),
+        dealRunningTotal: contribution.deal.runningTotal.toString(),
+        createdAt: contribution.createdAt,
+        updatedAt: contribution.updatedAt,
+      },
+    });
+  } catch (error) {
+    logger.error({ error, contributionId: req.params.contributionId }, 'Get contribution error');
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed',
+    });
+  }
+});
+
+/**
+ * POST /funding/contributions/:contributionId/verify
+ *
+ * Manually trigger a deposit verification check for a contribution (admin/cron).
+ * Returns the verification result. On success the background job will also
+ * mint tokens; this endpoint just reports the current verification state.
+ */
+router.post('/contributions/:contributionId/verify', async (req: Request, res: Response) => {
+  try {
+    const contributionId = req.params.contributionId as string;
+    const { getDepositVerificationService } = await import('../services/funding');
+    const { prisma } = await import('../config/database');
+
+    const contribution = await prisma.contribution.findUnique({
+      where: { id: contributionId },
+      select: { type: true, status: true },
+    });
+    if (!contribution) {
+      return res.status(404).json({ success: false, error: 'Contribution not found' });
+    }
+    if (contribution.status === 'CONFIRMED') {
+      return res.json({ success: true, verified: true, status: 'CONFIRMED', message: 'Already confirmed' });
+    }
+
+    const verificationService = getDepositVerificationService();
+    const result = contribution.type === 'FIAT'
+      ? await verificationService.verifyFiatDeposit(contributionId)
+      : await verificationService.verifyCryptoDeposit(contributionId);
+
+    res.json({
+      success: true,
+      verified: result.verified,
+      status: result.verified ? 'CONFIRMED' : 'PENDING',
+      txHash: result.txHash,
+      error: result.error,
+    });
+  } catch (error) {
+    logger.error({ error, contributionId: req.params.contributionId }, 'Verify contribution error');
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed',
+    });
+  }
+});
+
+/**
  * GET /funding/deals/:dealId/summary
  * 
  * Get funding summary for a deal

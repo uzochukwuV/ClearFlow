@@ -1,5 +1,9 @@
 import Bull from 'bull';
 import { config, logger } from '../config';
+import { prisma } from '../config/database';
+import { ContributionStatus, ContributionType } from '@prisma/client';
+import { getDepositVerificationService } from '../services/funding';
+import { getDealService } from '../services/deal';
 
 export const jobQueue = new Bull('clearflow', config.REDIS_URL);
 
@@ -14,9 +18,79 @@ jobQueue.process('poll-atoken-issuance', 5, async (job) => {
   // Phase 5: Poll Cleanverse for A-Token issuance status
 });
 
+/**
+ * Poll a single FIAT contribution's ramp order until COMPLETED, then verify
+ * the USDC landed in the deal wallet and mint tokens.
+ *
+ * Job data: { contributionId: string }
+ */
 jobQueue.process('poll-ramp-order', 5, async (job) => {
-  logger.info({ jobId: job.id }, 'Processing poll-ramp-order job');
-  // Phase 7: Poll Cleanverse for fiat ramp order status
+  const { contributionId } = job.data as { contributionId: string };
+  logger.info({ jobId: job.id, contributionId }, 'Processing poll-ramp-order job');
+
+  const contribution = await prisma.contribution.findUnique({
+    where: { id: contributionId },
+    select: { type: true, status: true },
+  });
+  if (!contribution) {
+    logger.warn({ contributionId }, 'poll-ramp-order: contribution not found');
+    return;
+  }
+  if (contribution.status === ContributionStatus.CONFIRMED) {
+    logger.info({ contributionId }, 'poll-ramp-order: already confirmed');
+    return;
+  }
+  if (contribution.type !== ContributionType.FIAT) {
+    logger.warn({ contributionId, type: contribution.type }, 'poll-ramp-order: not a FIAT contribution');
+    return;
+  }
+
+  const verificationService = getDepositVerificationService();
+  const result = await verificationService.verifyFiatDeposit(contributionId);
+  if (result.verified) {
+    await getDealService().mintTokensForContribution(contributionId);
+    logger.info({ contributionId, rampOrderId: result.rampOrderId }, 'poll-ramp-order: verified + minted');
+  } else {
+    // Re-throw so Bull retries with exponential backoff until the order settles.
+    throw new Error(result.error || 'Ramp order not yet completed');
+  }
+});
+
+/**
+ * Verify a CRYPTO contribution's on-chain deposit and mint tokens once
+ * the inbound USDC transfer is confirmed by Circle.
+ *
+ * Job data: { contributionId: string }
+ */
+jobQueue.process('verify-deposit', 5, async (job) => {
+  const { contributionId } = job.data as { contributionId: string };
+  logger.info({ jobId: job.id, contributionId }, 'Processing verify-deposit job');
+
+  const contribution = await prisma.contribution.findUnique({
+    where: { id: contributionId },
+    select: { type: true, status: true },
+  });
+  if (!contribution) {
+    logger.warn({ contributionId }, 'verify-deposit: contribution not found');
+    return;
+  }
+  if (contribution.status === ContributionStatus.CONFIRMED) {
+    logger.info({ contributionId }, 'verify-deposit: already confirmed');
+    return;
+  }
+
+  const verificationService = getDepositVerificationService();
+  const result =
+    contribution.type === ContributionType.FIAT
+      ? await verificationService.verifyFiatDeposit(contributionId)
+      : await verificationService.verifyCryptoDeposit(contributionId);
+
+  if (result.verified) {
+    await getDealService().mintTokensForContribution(contributionId);
+    logger.info({ contributionId }, 'verify-deposit: verified + minted');
+  } else {
+    throw new Error(result.error || 'Deposit not yet confirmed');
+  }
 });
 
 jobQueue.process('check-deal-deadline', async (job) => {

@@ -60,6 +60,15 @@ export const contributeRequestSchema = z.object({
   dealId: z.string().uuid('Invalid deal ID'),
   amount: z.string().min(1, 'Amount is required'),
 
+  // Payment path: CRYPTO (investor sends USDC on-chain) or FIAT (Cleanverse ramp)
+  paymentMethod: z.enum(['CRYPTO', 'FIAT']).default('CRYPTO'),
+  // FIAT-only inputs (ignored for CRYPTO)
+  fiatCurrency: z.string().optional(),
+  partnerCustomerId: z.string().optional(),
+  // When true, block until the deposit verifies and mint immediately.
+  // Default false → return PENDING and verify via background job.
+  mintTokensOnConfirm: z.boolean().default(false),
+
   // Chain
   chainId: z.number().int().positive().default(84532),
 });

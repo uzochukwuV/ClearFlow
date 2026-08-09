@@ -13,3 +13,4 @@
 export * from './types';
 export * from './funding.service';
 export * from './webhook.service';
+export * from './deposit-verification.service';

@@ -218,45 +218,271 @@ GET /api/v1/deals?status=OPEN
 
 ## 6. Investor Contributions
 
+Investors contribute USDC to a deal and receive POF A-Tokens (1:1). **Tokens are
+never minted until the deposit is verified** — the contribution starts `PENDING`
+and only flips to `CONFIRMED` once USDC is proven to have landed in the deal's
+Circle wallet. Two payment paths feed one verification pipeline:
+
+- **CRYPTO** (default): investor sends USDC directly on-chain to the deal wallet.
+  The backend returns the deal wallet address + expected amount; the investor
+  performs the transfer out-of-band (MetaMask/WalletConnect). Verification is
+  asynchronous (background job) unless `mintTokensOnConfirm: true`.
+- **FIAT**: investor pays fiat via the Cleanverse ramp widget. The backend
+  obtains a ramp quote + widget URL; the investor completes payment in the
+  widget. Verification polls the ramp order to `COMPLETED`, then confirms the
+  USDC landed in the deal wallet.
+
 ### 6.1 Contribute to Deal
 ```http
 POST /api/v1/deals/:dealId/contribute
 ```
 
-**Request:**
+**Request (CRYPTO path — default):**
 ```json
 {
-  "investorAddress": "0x...",
-  "amount": 50000,
-  "signature": "0x..."
+  "investorSignature": "0x...",
+  "investorMessage": "...",
+  "adminSignature": "0x...",
+  "adminMessage": "...",
+  "amount": "50000",
+  "paymentMethod": "CRYPTO",
+  "mintTokensOnConfirm": false
 }
 ```
 
-**Frontend Flow:**
-1. Investor enters contribution amount
-2. Shows fiat onramp (Ramp) link for buying USDC
-3. Investor approves USDC for contract
-4. Investor signs contribution
-5. Backend confirms and mints A-Tokens
+**Request (FIAT path):**
+```json
+{
+  "investorSignature": "0x...",
+  "investorMessage": "...",
+  "adminSignature": "0x...",
+  "adminMessage": "...",
+  "amount": "50000",
+  "paymentMethod": "FIAT",
+  "fiatCurrency": "USD",
+  "partnerCustomerId": "investor-uuid-or-wallet",
+  "mintTokensOnConfirm": false
+}
+```
 
-**Display After Contribution:**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `investorSignature` / `investorMessage` | Yes | Investor EIP-712 signature proving wallet ownership |
+| `adminSignature` / `adminMessage` | Yes | Admin EIP-712 signature approving the contribution |
+| `amount` | Yes | USDC amount (string, e.g. `"50000"`) |
+| `paymentMethod` | No | `"CRYPTO"` (default) or `"FIAT"` |
+| `fiatCurrency` | FIAT only | Fiat currency code, e.g. `"USD"` |
+| `partnerCustomerId` | FIAT only | Cleanverse partner customer ID (investor UUID/wallet) |
+| `mintTokensOnConfirm` | No | `false` (default) → async verify + mint; `true` → block until verified |
+
+**Response (async, default — `mintTokensOnConfirm: false`):**
+```json
+{
+  "success": true,
+  "data": {
+    "contributionId": "uuid",
+    "contributionStatus": "PENDING",
+    "tokenAmount": null,
+    "dealWalletAddress": "0x109ff96709583ab7525dd54eb559d9dc7f41dabc",
+    "txHash": null,
+    "rampOrderId": null,
+    "rampQuoteToken": null,
+    "rampWidgetUrl": null,
+    "rampTxHash": null
+  }
+}
+```
+
+> For **CRYPTO**: show the investor `dealWalletAddress` + `amount` and ask them to
+> send USDC on-chain. Then poll the contribution status (6.2).
+>
+> For **FIAT**: `rampWidgetUrl` is returned — redirect/embed the widget so the
+> investor completes fiat payment. Then poll the contribution status (6.2).
+
+**Response (sync — `mintTokensOnConfirm: true`, after verification succeeds):**
+```json
+{
+  "success": true,
+  "data": {
+    "contributionId": "uuid",
+    "contributionStatus": "CONFIRMED",
+    "tokenAmount": "50000",
+    "dealWalletAddress": "0x109ff9...",
+    "txHash": "0x29662ffd6b1949427fce2d099dfe01575b16f9d34497b3954883710e59107935",
+    "rampOrderId": null,
+    "rampQuoteToken": null,
+    "rampWidgetUrl": null,
+    "rampTxHash": null
+  }
+}
+```
+
+If verification times out in sync mode, `success: false` with `contributionStatus: "PENDING"`
+and an `error` — the contribution remains pending and the background job will keep verifying.
+
+**Frontend Flow (CRYPTO):**
+1. Investor enters contribution amount
+2. Investor + admin sign EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "CRYPTO"`
+3. Backend returns `contributionStatus: "PENDING"` + `dealWalletAddress`
+4. Frontend shows: "Send exactly **50,000 USDC** to `0x109ff9…` on Monad testnet"
+5. Investor sends USDC from their wallet (MetaMask) to the deal wallet
+6. Frontend polls `GET /funding/contributions/:contributionId` every ~10s
+7. When `status` → `CONFIRMED` and `tokenAmount` is set, show success
+
+**Frontend Flow (FIAT):**
+1. Investor enters contribution amount + fiat currency
+2. Investor + admin sign EIP-712 → `POST /deals/:dealId/contribute` with `paymentMethod: "FIAT"`
+3. Backend returns `contributionStatus: "PENDING"` + `rampWidgetUrl`
+4. Frontend opens the Cleanverse ramp widget (redirect or iframe)
+5. Investor completes fiat payment in the widget
+6. Frontend polls `GET /funding/contributions/:contributionId` every ~10s
+7. When `status` → `CONFIRMED` and `tokenAmount` is set, show success
+
+**Display After Contribution Confirmed:**
 ```
 ✅ CONTRIBUTION CONFIRMED
 Amount: $50,000 USDC
 A-Tokens Received: 50,000 POF-ABC12
+Deposit Tx: 0x29662ffd…
+Confirmed At: Aug 9, 2026 12:22 UTC
 Yield Accruing: 8.5% APR
 Expected Return: $54,250
 ```
 
-### 6.2 Get User's Contributions
+### 6.2 Check Contribution Status (Poll After Contribute)
 ```http
-GET /api/v1/users/:address/contributions
+GET /api/v1/funding/contributions/:contributionId
 ```
 
-### 6.3 Ramp Onramp URL (Fiat → USDC)
+**Response:**
+```json
+{
+  "success": true,
+  "contribution": {
+    "id": "uuid",
+    "dealId": "uuid",
+    "type": "CRYPTO",
+    "status": "PENDING",
+    "amount": "50000",
+    "currency": "USDC",
+    "txHash": null,
+    "fromAddress": "0x4e6cdb…",
+    "toAddress": "0x109ff9…",
+    "confirmedAt": null,
+    "rampOrderId": null,
+    "rampQuoteToken": null,
+    "rampTxHash": null,
+    "dealWalletAddress": "0x109ff9…",
+    "atokenSymbol": "POF-ABC12",
+    "dealStatus": "OPEN",
+    "dealTarget": "150000",
+    "dealRunningTotal": "50000",
+    "createdAt": "2026-08-09T12:21:33.970Z",
+    "updatedAt": "2026-08-09T12:21:33.970Z"
+  }
+}
 ```
-GET /api/v1/ramp/onramp-url?address=0x...&amount=50000
+
+| `status` | Meaning | Frontend display |
+|----------|---------|------------------|
+| `PENDING` | Deposit not yet verified | "Awaiting deposit confirmation…" (poll again) |
+| `CONFIRMED` | USDC verified in deal wallet, tokens minted | Success screen (txHash, tokenAmount) |
+| `FAILED` | Ramp failed / deposit rejected | Error screen with reason |
+| `REFUNDED` | Contribution refunded (expired/cancelled deal) | Refund notice |
+
+**Frontend polling pattern:**
+```typescript
+async function pollContributionStatus(contributionId: string) {
+  for (let i = 0; i < 60; i++) {
+    const res = await fetch(`/api/v1/funding/contributions/${contributionId}`);
+    const { contribution } = await res.json();
+    if (contribution.status === 'CONFIRMED') return contribution; // ✅ done
+    if (contribution.status === 'FAILED') throw new Error('Contribution failed');
+    await sleep(10000); // 10s between polls
+  }
+  throw new Error('Verification timed out — still processing in background');
+}
 ```
+
+### 6.3 Manually Trigger Verification (Admin/Cron)
+```http
+POST /api/v1/funding/contributions/:contributionId/verify
+```
+
+Runs a single verification check and returns the result (does not block). Useful
+when the frontend wants a fresh check instead of polling, or for admin dashboards.
+On `verified: true` the background job mints tokens; this endpoint reports state.
+
+**Response:**
+```json
+{
+  "success": true,
+  "verified": false,
+  "status": "PENDING",
+  "txHash": null,
+  "error": "No matching inbound transfer and on-chain balance insufficient"
+}
+```
+
+### 6.4 Deal Funding Summary
+```http
+GET /api/v1/funding/deals/:dealId/summary
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "summary": {
+    "dealId": "uuid",
+    "targetAmount": "150000",
+    "minimumAmount": "120000",
+    "runningTotal": "50000",
+    "percentage": 33.33,
+    "investorCount": 1,
+    "state": "OPEN",
+    "timeRemaining": 2592000000
+  }
+}
+```
+
+**Frontend display (deal funding progress):**
+```
+┌────────────────────────────────────────────┐
+│  POF-ABC12 Funding                         │
+│  ████████░░░░░░░░░░░░  33%                 │
+│  $50,000 / $150,000 raised                 │
+│  1 investor • 30 days remaining            │
+│  Status: OPEN                              │
+└────────────────────────────────────────────┘
+```
+
+### 6.5 Deal Funding Events (Audit Trail)
+```http
+GET /api/v1/funding/deals/:dealId/events?limit=50
+```
+
+Returns the audit log of funding events (`DEAL_OPENED`, `CONTRIBUTION_CONFIRMED`,
+`FULLY_FUNDED`, `SETTLEMENT_COMPLETED`, etc.) for a timeline view.
+
+### 6.6 Investor Positions
+```http
+GET /api/v1/funding/investor/:address/positions
+```
+
+Returns all deal positions for an investor, with `fundingPercentage` per deal.
+
+### 6.7 Ramp Endpoints (FIAT path)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /ramp/currencies` | Supported fiat currencies |
+| `GET /ramp/countries` | Supported countries |
+| `POST /ramp/quote` | Get on/off-ramp quote |
+| `POST /ramp/widget` | Create widget URL for payment |
+| `POST /ramp/on-ramp/quote` | On-ramp quote (fiat → USDC) |
+| `POST /ramp/off-ramp/quote` | Off-ramp quote (USDC → fiat) |
+| `GET /ramp/order/:orderId` | Order status (raw Cleanverse order) |
+| `POST /ramp/faucet` | Request test tokens |
 
 ---
 
@@ -524,6 +750,18 @@ All the following endpoints are now implemented in the backend:
 | `POST /settlement/deals/:dealId/buyer-repay` | Buyer makes repayment |
 | `POST /settlement/deals/:dealId/payout-release` | Release payout to supplier |
 
+### 12.7 Funding & Deposit Verification (New)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /funding/contributions/:contributionId` | Single contribution status + deposit provenance (poll after contribute) |
+| `POST /funding/contributions/:contributionId/verify` | Manually trigger a deposit verification check |
+| `GET /funding/deals/:dealId/summary` | Deal funding progress (target, running total, %, investor count, time left) |
+| `GET /funding/deals/:dealId/events` | Funding audit-trail events (timeline) |
+| `GET /funding/investor/:address/positions` | All deal positions for an investor |
+| `POST /funding/deals/:dealId/settle` | Initiate settlement for a fully funded deal |
+| `POST /funding/deals/:dealId/refund` | Process refunds for expired/cancelled deal |
+| `POST /funding/expired/process` | Process all expired deals (admin/cron) |
+
 ---
 
 ## 13. Missing Endpoints (Low Priority)
@@ -546,12 +784,21 @@ The following endpoints are **not yet implemented** and can be added later:
 
 ## 14. A-Token & Investor Claim Mechanics
 
-### A-Token Minting (1:1 Ratio)
-When an investor contributes to a deal:
-- Investor contributes **$1,000 USDC**
-- System mints **1,000 A-tokens** to investor's wallet (1:1 ratio)
-- A-tokens represent investor's share of the deal
-- Deal's `totalSupply` increases by 1,000
+### A-Token Minting (1:1 Ratio) — Verified Deposits Only
+When an investor contributes to a deal, **A-tokens are minted only after the
+deposit is verified** (USDC proven to have landed in the deal's Circle wallet):
+
+1. `POST /deals/:id/contribute` creates a `PENDING` Contribution (no tokens yet).
+2. `DepositVerificationService` verifies the deposit:
+   - **CRYPTO**: Circle `listInboundTransactions` matches amount + source address
+     (on-chain `USDC.balanceOf` fallback proves funds present if Circle lags).
+   - **FIAT**: `query_ramp_order` → `COMPLETED`, then USDC confirmed in deal wallet.
+3. On verification, Contribution → `CONFIRMED` (`txHash`, `confirmedAt` set).
+4. `mintTokensForContribution` mints A-tokens 1:1 to the investor:
+   - Investor contributes **$1,000 USDC** → mints **1,000 A-tokens**
+   - Deal's `totalSupply` increases by 1,000
+   - Deal's `runningTotal` increases by 1,000
+   - If `runningTotal ≥ targetAmount` → deal status `FUNDED`
 
 ### Repayment & Yield
 When buyer repays the deal:
@@ -671,9 +918,13 @@ interface AppState {
 ├─────────────────────────────────────────────────────────────┤
 │ 1. Onboarding → Register as INVESTOR                       │
 │ 2. Discover → Browse OPEN deals with yields                │
-│ 3. Invest → Buy USDC (Ramp), contribute to deal           │
-│ 4. Track → View portfolio, yield accruing                  │
-│ 5. Claim → After repayment, claim principal + yield         │
+│ 3. Contribute → POST /deals/:id/contribute (CRYPTO or FIAT)│
+│    - CRYPTO: get deal wallet address, send USDC on-chain    │
+│    - FIAT: get ramp widget URL, complete fiat payment       │
+│ 4. Track → Poll GET /funding/contributions/:id until        │
+│    status = CONFIRMED (deposit verified, tokens minted)     │
+│ 5. Portfolio → View holdings, yield accruing                │
+│ 6. Claim → After repayment, claim principal + yield         │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -700,6 +951,10 @@ interface AppState {
 | `INVALID_SIGNATURE` | EIP-712 signature failed | "Signature verification failed" |
 | `INSUFFICIENT_BALANCE` | Not enough USDC | "Insufficient USDC balance" |
 | `DEAL_CLOSED` | Deal no longer accepting contributions | "This deal is no longer accepting contributions" |
+| `DEPOSIT_NOT_VERIFIED` | USDC not yet confirmed in deal wallet | "Awaiting deposit confirmation…" |
+| `DEPOSIT_VERIFICATION_TIMEOUT` | Sync verification timed out | "Still processing — we'll confirm your deposit shortly" |
+| `RAMP_ORDER_FAILED` | Cleanverse ramp payment failed | "Fiat payment failed — please retry" |
+| `RAMP_NOT_COMPLETED` | Ramp order still processing | "Awaiting fiat payment confirmation…" |
 
 ---
 
@@ -715,7 +970,10 @@ Events:
 - deal.payout-released
 - deal.repayment-received
 - deal.distributed
-- contribution.received
+- contribution.created       (PENDING — awaiting deposit)
+- contribution.verified      (CONFIRMED — deposit proven, tokens minted)
+- contribution.failed        (FAILED — ramp failed / deposit rejected)
+- ramp.order.completed       (Cleanverse ramp payment settled)
 - notification.new
 ```
 
@@ -728,10 +986,11 @@ Events:
 {
   "name": "ClearFlow",
   "version": "1",
-  "chainId": 80002,
+  "chainId": 10143,
   "verifyingContract": "0x..."
 }
 ```
+> `chainId: 10143` is Monad testnet (the chain ClearFlow now uses for USDC + deal wallets).
 
 ### PO Signing Types
 ```json
@@ -748,4 +1007,4 @@ Events:
 
 ---
 
-*Last Updated: August 8, 2026*
+*Last Updated: August 9, 2026*
