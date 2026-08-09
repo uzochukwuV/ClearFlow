@@ -1,0 +1,74 @@
+export const CONSTANTS = {
+  // Supported chains
+  SUPPORTED_CHAINS: ['polygon', 'ethereum', 'base', 'arbitrum', 'bsc'] as const,
+
+  // Default chain
+  DEFAULT_CHAIN: 'polygon',
+
+  // Token decimals
+  USDC_DECIMALS: 6,
+
+  // Deal settings
+  DEFAULT_YIELD_PERCENT: 5,
+  MIN_ADVANCE_PERCENT: 50,
+  MAX_ADVANCE_PERCENT: 95,
+
+  // Funding deadlines
+  DEFAULT_FUNDING_DAYS: 30,
+
+  // Delivery deadlines
+  DEFAULT_DELIVERY_DAYS: 60,
+
+  // A-Pass tiers
+  MIN_INVESTOR_TIER: 1,
+
+  // State machine statuses
+  PO_STATUS: {
+    DRAFT: 'DRAFT',
+    PENDING_SIGNATURE: 'PENDING_SIGNATURE',
+    SIGNED: 'SIGNED',
+    CANCELLED: 'CANCELLED',
+  },
+
+  DEAL_STATUS: {
+    DRAFT: 'DRAFT',
+    OPEN: 'OPEN',
+    CLOSED_FUNDED: 'CLOSED_FUNDED',
+    CLOSED_SHORTFALL: 'CLOSED_SHORTFALL',
+    FUNDED: 'FUNDED',
+    AWAITING_DELIVERY: 'AWAITING_DELIVERY',
+    DELIVERED: 'DELIVERED',
+    AWAITING_REPAYMENT: 'AWAITING_REPAYMENT',
+    COMPLETED: 'COMPLETED',
+    DEFAULTED: 'DEFAULTED',
+    CANCELLED: 'CANCELLED',
+  },
+
+  APASS_STATUS: {
+    PENDING: 'PENDING',
+    ACTIVE: 'ACTIVE',
+    FROZEN: 'FROZEN',
+    EXPIRED: 'EXPIRED',
+  },
+
+  CONTRIBUTION_TYPE: {
+    CRYPTO: 'CRYPTO',
+    FIAT: 'FIAT',
+  },
+
+  CONTRIBUTION_STATUS: {
+    PENDING: 'PENDING',
+    CONFIRMED: 'CONFIRMED',
+    REFUNDED: 'REFUNDED',
+    FAILED: 'FAILED',
+  },
+
+  DELIVERY_STATUS: {
+    PENDING: 'PENDING',
+    BUYER_CONFIRMED: 'BUYER_CONFIRMED',
+    SUPPLIER_CONFIRMED: 'SUPPLIER_CONFIRMED',
+    CONFIRMED: 'CONFIRMED',
+  },
+} as const;
+
+export type SupportedChain = typeof CONSTANTS.SUPPORTED_CHAINS[number];
