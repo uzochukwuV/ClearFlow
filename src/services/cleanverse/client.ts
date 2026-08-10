@@ -110,6 +110,10 @@ export class CleanverseClient {
           }, 'Cleanverse encrypted request');
         } else {
           requestBody = JSON.stringify(body);
+          logger.info({
+            endpoint,
+            requestBodyPreview: JSON.stringify(body).substring(0, 500),
+          }, 'Cleanverse plain request');
         }
       }
 

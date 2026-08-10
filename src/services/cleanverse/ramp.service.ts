@@ -106,10 +106,9 @@ export class RampService {
     country?: string;
     partnerCustomerId?: string;
   }): Promise<CleanverseResponse<RampQuote>> {
-    const request: RampQuoteRequest = {
+    const request: Record<string, any> = {
       fiatCurrency: params.fiatCurrency,
       cryptoCurrency: params.cryptoCurrency,
-      amount: params.amount,
       isBuyOrSell: params.isBuyOrSell,
       network: params.network,
       paymentMethod: params.paymentMethod,
@@ -117,12 +116,21 @@ export class RampService {
       partnerCustomerId: params.partnerCustomerId,
     };
 
+    if (params.isBuyOrSell === 'BUY') {
+      request.fiatAmount = Number(params.amount);
+    } else {
+      request.cryptoAmount = Number(params.amount);
+    }
+
     logger.info({
       fiatCurrency: params.fiatCurrency,
       cryptoCurrency: params.cryptoCurrency,
       amount: params.amount,
       isBuyOrSell: params.isBuyOrSell,
-      country: params.country
+      network: params.network,
+      paymentMethod: params.paymentMethod,
+      country: params.country,
+      requestPreview: request,
     }, 'Get ramp quote');
 
     const response = await this.client.post<RampQuote>('/query_ramp_quote', request);
