@@ -318,10 +318,18 @@ export class DealService {
       if (!skipAPassVerification) {
         const aPassVerification = await this.identityService.verifyAPass(investorAddress, chain);
         if (!aPassVerification.valid) {
+          logger.warn(
+            { investorAddress, dealId, reason: aPassVerification.reason, tier: aPassVerification.tier, countries: aPassVerification.countries },
+            'A-Pass verification failed'
+          );
           return { success: false, error: `Investor A-Pass verification failed: ${aPassVerification.reason}` };
         }
         if (deal.minInvestorTier && aPassVerification.tier !== undefined) {
           if (aPassVerification.tier < deal.minInvestorTier) {
+            logger.warn(
+              { investorAddress, dealId, tier: aPassVerification.tier, minInvestorTier: deal.minInvestorTier },
+              'Investor tier below minimum for deal'
+            );
             return { success: false, error: `Investor tier ${aPassVerification.tier} below minimum ${deal.minInvestorTier}` };
           }
         }
@@ -330,7 +338,11 @@ export class DealService {
             deal.eligibleCountries.includes(c)
           );
           if (!hasEligibleCountry) {
-            return { success: false, error: 'Investor country not eligible for this deal' };
+            logger.warn(
+              { investorAddress, dealId, countries: aPassVerification.countries, eligibleCountries: deal.eligibleCountries },
+              'Investor country not eligible for deal'
+            );
+            return { success: false, error: `Investor country not eligible for this deal. Eligible: ${deal.eligibleCountries.join(', ')}` };
           }
         }
       } else {

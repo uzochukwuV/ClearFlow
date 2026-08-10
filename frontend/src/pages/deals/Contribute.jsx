@@ -122,7 +122,8 @@ export default function Contribute() {
       }
     } catch (e) {
       console.log('Error submitting contribution:', e);
-      toast({ title: 'Could not submit contribution', description: e.message, variant: 'destructive' });
+      const errorDetails = e?.response?.data?.error?.details || e?.response?.data?.error?.message || e.message || 'Unknown error';
+      toast({ title: 'Could not submit contribution', description: errorDetails, variant: 'destructive' });
     } finally {
       setSubmitting(false);
     }
