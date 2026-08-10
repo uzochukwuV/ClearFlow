@@ -1,4 +1,8 @@
-# fly.toml app configuration file for clearflow-backend
+# fly.toml app configuration file generated for clearflow-backend on 2026-08-10T03:08:34Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = 'clearflow-backend'
 primary_region = 'jnb'
 
@@ -20,3 +24,4 @@ primary_region = 'jnb'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
