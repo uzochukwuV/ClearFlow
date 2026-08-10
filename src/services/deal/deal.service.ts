@@ -387,6 +387,9 @@ export class DealService {
           fiatAmount: amount,
           fiatCurrency: fiatCurrency || 'USD',
           partnerCustomerId: partnerCustomerId || investor.id,
+          network: chain,
+          paymentMethod: 'credit_debit_card',
+          country: deal.eligibleCountries?.[0] || 'US',
         });
         if (!this.rampService['client'].isSuccess(quoteRes) || !quoteRes.data) {
           await this.markContributionFailed(contribution.id, 'Ramp quote failed');
@@ -429,7 +432,8 @@ export class DealService {
 
       // 6. VERIFY + MINT
       //    Synchronous mode: block until the deposit verifies, then mint.
-      //    Async mode (default): return PENDING; background jobs verify + mint.
+      //    Async mode (default): return PENDING immediately and let the
+      //    background verifier or frontend polling resolve the contribution.
       let tokenAmount: string | undefined;
       let txHash: string | undefined;
       let rampTxHash: string | undefined;
@@ -455,30 +459,7 @@ export class DealService {
         rampTxHash = minted.rampTxHash;
         contributionStatus = ContributionStatus.CONFIRMED;
       } else {
-        // Async: enqueue a background verification job. Lazy import avoids the
-        // jobs <-> services module cycle.
-        try {
-          const { addJob } = await import('../../jobs/queue');
-          const jobName =
-            contributionType === ContributionType.FIAT ? 'poll-ramp-order' : 'verify-deposit';
-          await addJob(jobName, { contributionId: contribution.id }, { attempts: 30 });
-          logger.info({ contributionId: contribution.id, jobName }, 'Enqueued background deposit-verification job');
-        } catch (jobError) {
-          // If Redis/the queue is unavailable, fall back to a single inline check
-          // so the contribution is not stranded.
-          logger.warn({ error: jobError, contributionId: contribution.id }, 'Could not enqueue verification job — running inline check');
-          const check =
-            contributionType === ContributionType.FIAT
-              ? await this.depositVerificationService.verifyFiatDeposit(contribution.id)
-              : await this.depositVerificationService.verifyCryptoDeposit(contribution.id);
-          if (check.verified) {
-            const minted = await this.mintTokensForContribution(contribution.id);
-            tokenAmount = minted.tokenAmount;
-            txHash = minted.txHash;
-            rampTxHash = minted.rampTxHash;
-            contributionStatus = ContributionStatus.CONFIRMED;
-          }
-        }
+        void this.enqueueContributionVerification(contribution.id, contributionType);
       }
 
       return {
@@ -577,6 +558,41 @@ export class DealService {
       data: { status: ContributionStatus.FAILED },
     });
     logger.warn({ contributionId, reason }, 'Contribution marked FAILED');
+  }
+
+  private async enqueueContributionVerification(contributionId: string, contributionType: ContributionType) {
+    const isVercelRuntime = !!process.env.VERCEL;
+    const jobName = contributionType === ContributionType.FIAT ? 'poll-ramp-order' : 'verify-deposit';
+
+    if (isVercelRuntime) {
+      logger.info({ contributionId, jobName }, 'Vercel runtime detected ? skipping queue enqueue and returning immediately');
+      return;
+    }
+
+    try {
+      const { addJob } = await import('../../jobs/queue');
+      const enqueuePromise = addJob(jobName, { contributionId }, { attempts: 30 });
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Queue enqueue timeout')), 1500)
+      );
+
+      await Promise.race([enqueuePromise, timeout]);
+      logger.info({ contributionId, jobName }, 'Enqueued background deposit-verification job');
+    } catch (jobError) {
+      logger.warn({ error: jobError, contributionId, jobName }, 'Could not enqueue verification job ? running inline check');
+      try {
+        const check =
+          contributionType === ContributionType.FIAT
+            ? await this.depositVerificationService.verifyFiatDeposit(contributionId)
+            : await this.depositVerificationService.verifyCryptoDeposit(contributionId);
+        if (check.verified) {
+          await this.mintTokensForContribution(contributionId);
+          logger.info({ contributionId, jobName }, 'Inline verification completed after queue failure');
+        }
+      } catch (inlineError) {
+        logger.warn({ error: inlineError, contributionId, jobName }, 'Inline verification failed after queue failure');
+      }
+    }
   }
 
   /**

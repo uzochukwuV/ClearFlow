@@ -141,7 +141,7 @@ router.get('/order/:orderId', async (req: Request, res: Response) => {
  */
 router.post('/on-ramp/quote', async (req: Request, res: Response) => {
   try {
-    const { fiatAmount, fiatCurrency, partnerCustomerId } = req.body;
+    const { fiatAmount, fiatCurrency, partnerCustomerId, network, paymentMethod, country } = req.body;
 
     if (!fiatAmount || !fiatCurrency) {
       return res.status(400).json({ 
@@ -154,6 +154,9 @@ router.post('/on-ramp/quote', async (req: Request, res: Response) => {
       fiatAmount,
       fiatCurrency,
       partnerCustomerId: partnerCustomerId || '',
+      network: network || 'base',
+      paymentMethod: paymentMethod || 'credit_debit_card',
+      country,
     });
 
     res.json({ success: true, quote: result.data });

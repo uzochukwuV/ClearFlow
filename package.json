@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && tsc",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",

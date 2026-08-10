@@ -153,11 +153,20 @@ router.post('/:id/contribute', asyncHandler(async (req: Request, res: Response) 
   });
 
   if (!result.success) {
+    logger.warn({ dealId: validated.dealId, investorAddress: investorAuthResult.walletAddress, error: result.error }, 'Contribution failed');
     return res.status(400).json({
       success: false,
       error: { message: 'Failed to contribute', details: result.error },
     });
   }
+
+  logger.info({
+    dealId: validated.dealId,
+    investorAddress: investorAuthResult.walletAddress,
+    contributionId: result.contributionId,
+    contributionStatus: result.contributionStatus,
+    paymentMethod: validated.paymentMethod,
+  }, 'Contribution response ready');
 
   res.json({
     success: true,

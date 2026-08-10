@@ -219,12 +219,18 @@ export class RampService {
     fiatAmount: string;
     fiatCurrency: string;
     partnerCustomerId: string;
+    network?: string;
+    paymentMethod?: string;
+    country?: string;
   }): Promise<CleanverseResponse<RampQuote>> {
     return this.getQuote({
       fiatCurrency: params.fiatCurrency,
       cryptoCurrency: 'USDC',
       amount: params.fiatAmount,
       isBuyOrSell: 'BUY',
+      network: params.network,
+      paymentMethod: params.paymentMethod,
+      country: params.country,
       partnerCustomerId: params.partnerCustomerId,
     });
   }
