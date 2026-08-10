@@ -1,0 +1,27 @@
+# Dependency / build output
+node_modules
+dist
+npm-debug.log
+.npm
+
+# Git / deployment metadata
+.git
+.gitignore
+.dockerignore
+
+# Environment / secrets
+.env
+.env.*
+*.log
+.DS_Store
+
+# Frontend is deployed separately
+frontend/node_modules
+frontend/dist
+
+# Local tooling / IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
