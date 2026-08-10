@@ -22,7 +22,7 @@ export function normalizeApassStatus(status) {
 }
 
 export function isApassActive(status) {
-  return normalizeApassStatus(status) === 'ACTIVE';
+  return normalizeApassStatus(status) === 'ACTIVE' || normalizeApassStatus(status) === 'PENDING';
 }
 
 export function isApassFrozen(status) {

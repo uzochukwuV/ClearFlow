@@ -35,11 +35,22 @@ export interface ContributeResult {
 export interface DealWithDetails {
   id: string;
   purchaseOrderId: string;
+  buyerAddress?: string;
+  supplierAddress?: string;
+  purchaseOrder?: {
+    poReference: string;
+    amount: string;
+    currency: string;
+    buyerAddress?: string;
+    supplierAddress?: string;
+    deliveryDate?: Date;
+  };
   chain: string;
   targetAmount: string;
   runningTotal: string;
   currency: string;
   fundingDeadline: Date;
+  deliveryDeadline?: Date;
   yieldPercent: number;
   status: string;
   atokenSymbol?: string;
@@ -563,6 +574,12 @@ export class DealService {
     const deal = await prisma.deal.findUnique({
       where: { id: dealId },
       include: {
+        purchaseOrder: {
+          include: {
+            buyer: { select: { walletAddress: true } },
+            supplier: { select: { walletAddress: true } },
+          },
+        },
         contributions: {
           include: { investor: true },
         },
@@ -574,11 +591,24 @@ export class DealService {
     return {
       id: deal.id,
       purchaseOrderId: deal.purchaseOrderId,
+      buyerAddress: deal.purchaseOrder?.buyer.walletAddress,
+      supplierAddress: deal.purchaseOrder?.supplier.walletAddress,
+      purchaseOrder: deal.purchaseOrder
+        ? {
+            poReference: deal.purchaseOrder.poReference,
+            amount: deal.purchaseOrder.amount.toString(),
+            currency: deal.purchaseOrder.currency,
+            buyerAddress: deal.purchaseOrder.buyer?.walletAddress,
+            supplierAddress: deal.purchaseOrder.supplier?.walletAddress,
+            deliveryDate: deal.purchaseOrder.deliveryDate,
+          }
+        : undefined,
       chain: deal.chain,
       targetAmount: deal.targetAmount.toString(),
       runningTotal: deal.runningTotal.toString(),
       currency: deal.currency,
       fundingDeadline: deal.fundingDeadline,
+      deliveryDeadline: deal.deliveryDeadline || deal.purchaseOrder?.deliveryDate || undefined,
       yieldPercent: deal.yieldPercent,
       status: deal.status,
       atokenSymbol: deal.atokenSymbol || undefined,

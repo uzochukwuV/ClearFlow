@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useWallet } from '@/lib/wallet';
+import { getAccounts } from '@/lib/signing';
 import { useCreatePurchaseOrder } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -33,16 +34,33 @@ export default function CreatePO() {
     }
     setSaving(true);
     try {
+      const [freshBuyerAddress] = await getAccounts();
+      const buyerAddress = freshBuyerAddress || address;
+      if (!buyerAddress) {
+        throw new Error('Wallet not connected.');
+      }
+      if (address && freshBuyerAddress && freshBuyerAddress.toLowerCase() !== address.toLowerCase()) {
+        throw new Error(`Connected wallet changed. State wallet ${address} does not match active wallet ${freshBuyerAddress}. Please reconnect or switch accounts, then try again.`);
+      }
+
       const poReference = 'PO-' + Date.now().toString().slice(-8);
       const canonicalPO = {
         poReference,
-        buyerAddress: address,
+        buyerAddress,
         supplierAddress: form.supplierAddress,
         amount: String(form.amount),
         currency: 'USD',
         quantity: Number(form.quantity) || 1,
         deliveryDate: form.deliveryDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       };
+
+      console.debug('[PO:CreatePO] submit wallet check', {
+        walletStateAddress: address,
+        freshBuyerAddress,
+        buyerAddress,
+        poReference,
+      });
+
       const result = await createPO.mutateAsync({ po: canonicalPO, eip712Signer: signPurchaseOrder });
       toast({ title: 'Purchase order created', description: `${poReference} — awaiting supplier signature.` });
       navigate(`/app/orders/${result.poId}`);
@@ -83,8 +101,9 @@ export default function CreatePO() {
             <Label>Delivery Date</Label>
             <Input type="date" value={form.deliveryDate} onChange={set('deliveryDate')} />
           </div>
-          <div className="rounded-md border border-border bg-secondary p-3 text-sm">
+          <div className="rounded-md border border-border bg-secondary p-3 text-sm space-y-2">
             <div className="flex items-center gap-2 text-slate"><ShieldCheck className="h-4 w-4" /> You'll sign an EIP-712 message as <span className="font-mono">{shortAddr(address)}</span></div>
+            <div className="text-xs text-slate">Live wallet: <span className="font-mono">{address || 'not connected'}</span></div>
           </div>
           <Button className="w-full" size="lg" onClick={handleSubmit} disabled={saving}>
             {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing & submitting…</> : 'Sign & Create PO'}

@@ -38,25 +38,27 @@ export default function Login() {
     const run = async () => {
       setCheckingApass(true);
       try {
+        console.log('Checking A-Pass for address:', address);
         const result = await identityStatus.mutateAsync({ walletAddress: address, signer: sign });
-        if (cancelled) return;
-
-        if (result?.registered && isApassActive(result.status)) {
+        // if (cancelled) return;
+        console.log('A-Pass preflight result:', result, result?.data?.registered, result?.data?.status);    
+        if (result?.data?.registered && isApassActive(result.data.status)) {
           markOnboarded({
-            apassId: result.apassId,
-            status: result.status,
-            tier: result.tier,
+            apassId: result.data.apassId,
+            status: result.data.status,
+            tier: result.data.tier,
           });
           goToApp();
           return;
         }
 
         navigate('/onboarding', { replace: true });
-      } catch {
+      } catch (error) {
+        console.error('Error checking A-Pass:', error);
         if (!cancelled) navigate('/onboarding', { replace: true });
       } finally {
         if (!cancelled) setCheckingApass(false);
-        navigate('/onboarding', { replace: true });
+        
       }
     };
 

@@ -118,7 +118,6 @@ export class PurchaseOrderService {
 
       const recoveredBuyerChecksum = getAddress(recoveredBuyer);
       const buyerAddressChecksum = getAddress(buyerAddress);
-      const effectiveBuyerAddress = recoveredBuyerChecksum;
       const buyerMismatch = recoveredBuyerChecksum !== buyerAddressChecksum;
       logger.debug({
         recoveredBuyer,
@@ -136,11 +135,15 @@ export class PurchaseOrderService {
           chainId,
           poReference,
         }, 'Buyer signature recovered from a different wallet than the requested buyer address');
+        return {
+          success: false,
+          error: `Buyer signature does not match the requested buyer address. Expected ${buyerAddressChecksum}, got ${recoveredBuyerChecksum}.`,
+        };
       }
       // 2. Verify buyer A-Pass (skip in demo mode)
       const skipAPassVerification = process.env.SKIP_APASS_VERIFICATION === 'true';
       if (!skipAPassVerification) {
-        const buyerAPass = await this.identityService.verifyAPass(effectiveBuyerAddress);
+        const buyerAPass = await this.identityService.verifyAPass(buyerAddressChecksum);
         if (!buyerAPass.valid) {
           return {
             success: false,
@@ -148,7 +151,7 @@ export class PurchaseOrderService {
           };
         }
       } else {
-        logger.info({ buyerAddress: effectiveBuyerAddress }, 'Skipping A-Pass verification (demo mode)');
+        logger.info({ buyerAddress: buyerAddressChecksum }, 'Skipping A-Pass verification (demo mode)');
       }
 
       // 3. Generate PO hash
@@ -162,7 +165,7 @@ export class PurchaseOrderService {
       if (!buyer) {
         buyer = await prisma.user.create({
           data: {
-            walletAddress: effectiveBuyerAddress.toLowerCase(),
+            walletAddress: buyerAddressChecksum.toLowerCase(),
             userType: UserType.BUYER,
           },
         });

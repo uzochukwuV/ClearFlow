@@ -82,7 +82,7 @@ export async function contributeToDeal(dealId, investorAddress, params, signer) 
     investorSignature: signature,
     investorMessage: message,
     investorAddress,
-    amount: params.amount,
+    amount: String(params.amount),
     paymentMethod: params.paymentMethod || 'CRYPTO',
     fiatCurrency: params.fiatCurrency,
     partnerCustomerId: params.partnerCustomerId,

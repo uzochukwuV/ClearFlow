@@ -115,10 +115,13 @@ export function WalletProvider({ children }) {
   );
 
   const signPurchaseOrder = useCallback(
-    (po) => {
-      if (!address) throw new Error('Wallet not connected.');
+    async (po) => {
+      const [freshAccount] = await getAccounts();
+      const signerAddress = freshAccount || address;
+      if (!signerAddress) throw new Error('Wallet not connected.');
       console.debug('[Wallet:signPurchaseOrder] signing PO', {
-        walletAddress: address,
+        walletAddress: signerAddress,
+        walletStateAddress: address,
         chainId,
         poReference: po?.poReference,
         buyerAddress: po?.buyerAddress,
@@ -127,7 +130,7 @@ export function WalletProvider({ children }) {
         quantity: po?.quantity,
         deliveryDate: po?.deliveryDate,
       });
-      return _signPurchaseOrder(po, address);
+      return _signPurchaseOrder(po, signerAddress);
     },
     [address, chainId]
   );
@@ -160,4 +163,8 @@ export function useWallet() {
   const ctx = useContext(WalletContext);
   if (!ctx) throw new Error('useWallet must be used within WalletProvider');
   return ctx;
+}
+
+export function useWalletOptional() {
+  return useContext(WalletContext);
 }

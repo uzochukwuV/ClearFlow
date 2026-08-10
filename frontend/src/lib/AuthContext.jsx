@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import { useWallet } from '@/lib/wallet';
+import { useWalletOptional } from '@/lib/wallet';
 
 // AuthContext — wallet-based auth + A-Pass (onboarding) gate.
 //
@@ -42,7 +42,9 @@ function saveUser(u) {
 }
 
 export const AuthProvider = ({ children }) => {
-  const { address, role: walletRole } = useWallet();
+  const wallet = useWalletOptional();
+  const address = wallet?.address ?? null;
+  const walletRole = wallet?.role ?? null;
   const [user, setUser] = useState(loadUser);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);

@@ -107,21 +107,24 @@ export async function signMessage(message, account) {
   return sig;
 }
 
-// Sign EIP-712 typed data (eth_signTypedData_v4). Used for Purchase Order
+// Sign EIP-712 typed data using ethers v6. Used for Purchase Order
 // signing. `typedData` must match the backend's createPOSigningData() exactly
 // (see buildPOTypedData in chains.js).
 export async function signTypedData(typedData, account) {
   const p = EIP1193_PROVIDER();
   if (!p) throw new Error('No wallet found.');
-  if (!account) {
-    const [acc] = await requestAccounts();
-    account = acc;
-  }
-  const sig = await p.request({
-    method: 'eth_signTypedData_v4',
-    params: [account, JSON.stringify(typedData)],
+
+  const provider = new ethers.BrowserProvider(p);
+  const signer = account ? await provider.getSigner(account) : await provider.getSigner();
+  const signerAddress = await signer.getAddress();
+
+  console.debug('[signing.js] Signing typed data with ethers signer', {
+    account: account || signerAddress,
+    signerAddress,
+    typedData,
   });
-  return sig;
+
+  return signer.signTypedData(typedData.domain, typedData.types, typedData.message);
 }
 
 // Convenience: sign a Purchase Order (EIP-712). `po` is the CanonicalPO shape
@@ -151,17 +154,19 @@ export function recoverSigner(message, signature) {
   }
 }
 
-// Recover the signer of an EIP-712 PO signature — mirrors backend recoverPOSigner.
+// Recover the signer of an EIP-712 PO signature ? mirrors backend recoverPOSigner.
 export function recoverPOSigner(po, signature, chainId = MONAD_TESTNET.chainId) {
   try {
     const typedData = buildPOTypedData(po, chainId);
+    console.debug('[signing.js] Recovering signer for typed data', typedData, 'signature:', signature);
     return ethers.verifyTypedData(
       typedData.domain,
       typedData.types,
       typedData.message,
       signature
     );
-  } catch {
+  } catch (error) {
+    console.debug('[signing.js] recoverPOSigner failed', error);
     return null;
   }
 }
